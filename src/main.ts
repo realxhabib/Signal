@@ -1,0 +1,279 @@
+import {
+  CandlestickSeries,
+  ColorType,
+  createChart,
+  createSeriesMarkers,
+  LineSeries,
+  type ISeriesApi,
+  type SeriesMarker,
+  type Time,
+  type UTCTimestamp,
+} from 'lightweight-charts';
+import './styles.css';
+import { backtest, defaultRisk, summarize, type Stats } from './backtest';
+import { ASSETS, INTERVALS, loadCandles, streamCandles, type Interval } from './data';
+import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from './jev';
+import { computeIndicators, defaultStrategy, generateSignals, type IndicatorSet } from './strategy';
+import type { Candle, RiskParams, Signal, Trade } from './types';
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const ui = {
+  symbol: $<HTMLSelectElement>('symbol'),
+  interval: $<HTMLSelectElement>('interval'),
+  useJev: $<HTMLInputElement>('useJev'),
+  leverage: $<HTMLInputElement>('leverage'),
+  riskPct: $<HTMLInputElement>('riskPct'),
+  minScore: $<HTMLInputElement>('minScore'),
+  run: $<HTMLButtonElement>('run'),
+  status: $<HTMLSpanElement>('status'),
+  latest: $<HTMLDivElement>('latest'),
+  stats: $<HTMLTableElement>('stats'),
+  trades: $<HTMLTableElement>('trades'),
+};
+
+for (const [sym, name] of Object.entries(ASSETS)) ui.symbol.add(new Option(`${name} (${sym})`, sym));
+for (const iv of INTERVALS) ui.interval.add(new Option(iv, iv));
+ui.interval.value = '1d';
+
+const COLORS = { long: '#26a69a', short: '#ef5350', veto: '#8a94a3', fast: '#4aa3ff', slow: '#f5a623', ema: '#6b7684' };
+
+const chartOptions = {
+  layout: { background: { type: ColorType.Solid, color: '#0e1117' }, textColor: '#8a94a3' },
+  grid: { vertLines: { color: '#1b212a' }, horzLines: { color: '#1b212a' } },
+  timeScale: { timeVisible: true, borderColor: '#262d36' },
+  rightPriceScale: { borderColor: '#262d36' },
+  autoSize: true,
+};
+const chart = createChart($('chart'), chartOptions);
+const candleSeries = chart.addSeries(CandlestickSeries, {
+  upColor: COLORS.long,
+  downColor: COLORS.short,
+  wickUpColor: COLORS.long,
+  wickDownColor: COLORS.short,
+  borderVisible: false,
+});
+const line = (color: string, title: string) =>
+  chart.addSeries(LineSeries, { color, lineWidth: 2, title, priceLineVisible: false, lastValueVisible: false });
+const fastSeries = line(COLORS.fast, 'JMA fast');
+const slowSeries = line(COLORS.slow, 'JMA slow');
+const emaSeries = line(COLORS.ema, 'EMA 200');
+const markers = createSeriesMarkers(candleSeries, []);
+
+const equityChart = createChart($('equity'), { ...chartOptions, timeScale: { ...chartOptions.timeScale, visible: false } });
+const equitySeries = equityChart.addSeries(LineSeries, { color: COLORS.fast, lineWidth: 2, priceLineVisible: false });
+chart.timeScale().subscribeVisibleLogicalRangeChange((r) => r && equityChart.timeScale().setVisibleLogicalRange(r));
+
+let candles: Candle[] = [];
+let verdicts = new Map<number, JevVerdict>();
+let stopStream: (() => void) | null = null;
+let runId = 0;
+
+const t = (s: number) => s as UTCTimestamp;
+const toLine = (vals: number[]) =>
+  candles.flatMap((c, i) => (Number.isNaN(vals[i]) ? [] : [{ time: t(c.time), value: vals[i] }]));
+
+function setStatus(msg: string, error = false) {
+  ui.status.textContent = msg;
+  ui.status.classList.toggle('error', error);
+}
+
+function riskParams(): RiskParams {
+  return { ...defaultRisk, leverage: +ui.leverage.value || 1, riskPct: +ui.riskPct.value || 1 };
+}
+
+/** Full pipeline: indicators -> candidate signals -> Jev verdicts -> backtest -> render. */
+async function analyze(id: number) {
+  const strategy = { ...defaultStrategy, minScore: +ui.minScore.value || defaultStrategy.minScore };
+  const ind = computeIndicators(candles, strategy);
+  const candidates = generateSignals(candles, ind, strategy);
+  const risk = riskParams();
+
+  let jevError: string | null = null;
+  if (ui.useJev.checked && candidates.length) {
+    try {
+      verdicts = await judgeSignals(
+        candles,
+        ind,
+        candidates,
+        { symbol: ui.symbol.value, assetLabel: ASSETS[ui.symbol.value], interval: ui.interval.value },
+        (d, n) => id === runId && setStatus(`Jev judging signals ${d}/${n}…`),
+      );
+    } catch (e) {
+      jevError = (e as Error).message;
+    }
+  }
+  if (id !== runId) return;
+
+  const jevOn = ui.useJev.checked && !jevError;
+  const approved = jevOn
+    ? candidates.filter((s) => {
+        const v = verdicts.get(s.index);
+        return v && approves(v, s.side, defaultJevThresholds);
+      })
+    : candidates;
+
+  const base = backtest(candles, candidates, ind.atr, risk);
+  const filtered = jevOn ? backtest(candles, approved, ind.atr, risk) : base;
+  const split = Math.floor(candles.length * 0.7);
+  const recent = backtest(candles, approved.filter((s) => s.index >= split), ind.atr, risk);
+
+  render(ind, candidates, approved, filtered.trades, filtered.equity);
+  renderStats(
+    [
+      ['Indicators only', summarize(base, risk.startEquity)],
+      ...(jevOn ? ([['Indicators + Jev', summarize(filtered, risk.startEquity)]] as [string, Stats][]) : []),
+      [`Recent 30%${jevOn ? ' (+Jev)' : ''}`, summarize(recent, risk.startEquity)],
+    ],
+  );
+  renderTrades(filtered.trades);
+  renderLatest(candidates, approved, jevOn);
+  setStatus(
+    jevError
+      ? `Jev unavailable (${jevError}); showing indicator-only signals`
+      : `${candles.length} bars · ${candidates.length} candidates · ${approved.length} signals`,
+    !!jevError,
+  );
+}
+
+function render(ind: IndicatorSet, candidates: Signal[], approved: Signal[], trades: Trade[], equity: { time: number; value: number }[]) {
+  candleSeries.setData(candles.map((c) => ({ ...c, time: t(c.time) })));
+  fastSeries.setData(toLine(ind.jmaFast));
+  slowSeries.setData(toLine(ind.jmaSlow));
+  emaSeries.setData(toLine(ind.trendEma));
+  equitySeries.setData(equity.map((p) => ({ time: t(p.time), value: p.value })));
+
+  const ok = new Set(approved.map((s) => s.index));
+  const m: SeriesMarker<Time>[] = [];
+  for (const s of candidates) {
+    const long = s.side === 'long';
+    const v = verdicts.get(s.index);
+    if (ok.has(s.index)) {
+      const prob = v ? ` ${Math.round((v.directionProbs[s.side] ?? 0) * 100)}%` : '';
+      m.push({
+        time: t(s.time),
+        position: long ? 'belowBar' : 'aboveBar',
+        shape: long ? 'arrowUp' : 'arrowDown',
+        color: long ? COLORS.long : COLORS.short,
+        text: `${long ? 'BUY' : 'SELL'}${prob}`,
+      });
+    } else {
+      m.push({ time: t(s.time), position: long ? 'belowBar' : 'aboveBar', shape: 'circle', color: COLORS.veto, text: 'veto', size: 0.5 });
+    }
+  }
+  for (const tr of trades) {
+    if (tr.exitReason === 'reverse' || tr.exitReason === 'end') continue;
+    m.push({
+      time: t(tr.exitTime),
+      position: tr.side === 'long' ? 'aboveBar' : 'belowBar',
+      shape: 'square',
+      color: tr.pnl > 0 ? COLORS.long : COLORS.short,
+      text: tr.exitReason === 'liquidation' ? 'LIQ' : `${tr.rMultiple >= 0 ? '+' : ''}${tr.rMultiple.toFixed(1)}R`,
+      size: 0.5,
+    });
+  }
+  markers.setMarkers(m.sort((a, b) => (a.time as number) - (b.time as number)));
+}
+
+const fmt = (v: number, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : '∞');
+
+function renderStats(rows: [string, Stats][]) {
+  const metrics: [string, (s: Stats) => string][] = [
+    ['Trades', (s) => String(s.trades)],
+    ['Win rate', (s) => `${fmt(s.winRate * 100)}%`],
+    ['Profit factor', (s) => fmt(s.profitFactor, 2)],
+    ['Net return', (s) => `${fmt(s.netReturnPct)}%`],
+    ['Max drawdown', (s) => `${fmt(s.maxDrawdownPct)}%`],
+    ['Avg R / trade', (s) => fmt(s.avgR, 2)],
+    ['Liquidations', (s) => String(s.liquidations)],
+  ];
+  ui.stats.innerHTML =
+    `<tr><th></th>${rows.map(([n]) => `<th>${n}</th>`).join('')}</tr>` +
+    metrics.map(([label, f]) => `<tr><td>${label}</td>${rows.map(([, s]) => `<td>${f(s)}</td>`).join('')}</tr>`).join('');
+}
+
+function renderTrades(trades: Trade[]) {
+  const recent = trades.slice(-12).reverse();
+  ui.trades.innerHTML =
+    '<tr><th>Entry</th><th>Side</th><th>Exit</th><th>R</th></tr>' +
+    recent
+      .map(
+        (tr) =>
+          `<tr><td>${new Date(tr.entryTime * 1000).toISOString().slice(5, 16).replace('T', ' ')}</td>` +
+          `<td class="${tr.side}">${tr.side}</td><td class="muted">${tr.exitReason}</td>` +
+          `<td class="${tr.pnl > 0 ? 'long' : 'short'}">${tr.rMultiple.toFixed(2)}</td></tr>`,
+      )
+      .join('');
+}
+
+function renderLatest(candidates: Signal[], approved: Signal[], jevOn: boolean) {
+  const last = approved[approved.length - 1];
+  const lastCandidate = candidates[candidates.length - 1];
+  if (!last) {
+    ui.latest.innerHTML = '<h3>Latest signal</h3><p class="muted">No signal in this range.</p>';
+    return;
+  }
+  const v = verdicts.get(last.index);
+  const barsAgo = candles.length - 1 - last.index;
+  const bar = (label: string, p: number) =>
+    `<span>${label}</span><div class="meter"><span style="width:${Math.round(p * 100)}%"></span></div><span>${Math.round(p * 100)}%</span>`;
+  ui.latest.innerHTML = `
+    <h3>Latest signal</h3>
+    <div class="signal-side ${last.side}">${last.side === 'long' ? 'BUY / LONG' : 'SELL / SHORT'}</div>
+    <div class="muted">${new Date(last.time * 1000).toUTCString()} · ${barsAgo} bar${barsAgo === 1 ? '' : 's'} ago · confluence ${last.score}/${last.maxScore}</div>
+    <ul class="reasons">${last.reasons.map((r) => `<li>${r}</li>`).join('')}</ul>
+    ${
+      jevOn && v
+        ? `<div class="probs">
+            ${bar('Long', v.directionProbs.long ?? 0)}
+            ${bar('Short', v.directionProbs.short ?? 0)}
+            ${bar('Stand aside', v.directionProbs.stand_aside ?? 0)}
+            ${bar('Trap risk', v.trapProb)}
+          </div>
+          <p class="note">Jev regime: ${v.regime.replace('_', ' ')} · conviction ${v.conviction.toFixed(1)}/4 · ${v.model}</p>`
+        : ''
+    }
+    ${
+      lastCandidate && lastCandidate.index > last.index
+        ? `<p class="note">Most recent candidate (${lastCandidate.side}, ${candles.length - 1 - lastCandidate.index} bars ago) was vetoed by Jev.</p>`
+        : ''
+    }`;
+}
+
+async function run() {
+  const id = ++runId;
+  stopStream?.();
+  verdicts = new Map();
+  ui.run.disabled = true;
+  setStatus('Loading market data…');
+  const symbol = ui.symbol.value;
+  const interval = ui.interval.value as Interval;
+  try {
+    const all = await loadCandles(symbol, interval);
+    if (id !== runId) return;
+    // Drop the still-forming bar so every signal is computed on closed candles.
+    candles = all.slice(0, -1);
+    await analyze(id);
+    chart.timeScale().setVisibleLogicalRange({ from: candles.length - 200, to: candles.length + 5 });
+    let forming: Candle | null = null;
+    stopStream = streamCandles(symbol, interval, (c, closed) => {
+      if (id !== runId) return;
+      if (closed) {
+        if (candles[candles.length - 1]?.time !== c.time) candles.push(c);
+        forming = null;
+        void analyze(id);
+      } else {
+        forming = c;
+        candleSeries.update({ ...forming, time: t(forming.time) });
+      }
+    });
+  } catch (e) {
+    setStatus((e as Error).message, true);
+  } finally {
+    ui.run.disabled = false;
+  }
+}
+
+ui.run.addEventListener('click', run);
+ui.symbol.addEventListener('change', run);
+ui.interval.addEventListener('change', run);
+void run();
