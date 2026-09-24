@@ -41,6 +41,7 @@ export interface RiskParams {
   feePct: number; // per side, % of notional
   slippagePct: number; // per side
   maintenanceMarginPct: number;
+  fundingPct8h?: number; // perpetual funding paid per 8h, % of notional
   startEquity: number;
 }
 
@@ -52,7 +53,7 @@ export interface Trade {
   exitIndex: number;
   exitTime: number;
   exitPrice: number;
-  exitReason: 'stop' | 'trail' | 'target' | 'reverse' | 'liquidation' | 'end';
+  exitReason: 'stop' | 'trail' | 'target' | 'reverse' | 'exit' | 'liquidation' | 'end';
   qty: number;
   pnl: number; // net of fees
   rMultiple: number;

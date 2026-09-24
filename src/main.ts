@@ -13,8 +13,10 @@ import './styles.css';
 import { backtest, defaultRisk, summarize, type Stats } from './backtest';
 import { ASSETS, INTERVALS, loadCandles, streamCandles, type Interval } from './data';
 import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from './jev';
-import { computeIndicators, defaultStrategy, generateSignals, type IndicatorSet } from './strategy';
+import { STRATEGIES, type StrategyOutput } from './strategies';
+import { computeIndicators, defaultStrategy } from './strategy';
 import type { Candle, RiskParams, Signal, Trade } from './types';
+import walkforward from './walkforward.json';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ui = {
@@ -23,7 +25,9 @@ const ui = {
   useJev: $<HTMLInputElement>('useJev'),
   leverage: $<HTMLInputElement>('leverage'),
   riskPct: $<HTMLInputElement>('riskPct'),
-  minScore: $<HTMLInputElement>('minScore'),
+  strategy: $<HTMLSelectElement>('strategy'),
+  orderType: $<HTMLSelectElement>('orderType'),
+  walkforward: $<HTMLDivElement>('walkforward'),
   run: $<HTMLButtonElement>('run'),
   status: $<HTMLSpanElement>('status'),
   latest: $<HTMLDivElement>('latest'),
@@ -31,9 +35,11 @@ const ui = {
   trades: $<HTMLTableElement>('trades'),
 };
 
+for (const s of STRATEGIES) ui.strategy.add(new Option(s.name, s.id));
+ui.strategy.value = 'supertrend';
 for (const [sym, name] of Object.entries(ASSETS)) ui.symbol.add(new Option(`${name} (${sym})`, sym));
 for (const iv of INTERVALS) ui.interval.add(new Option(iv, iv));
-ui.interval.value = '1d';
+ui.interval.value = '4h';
 
 const COLORS = { long: '#26a69a', short: '#ef5350', veto: '#8a94a3', fast: '#4aa3ff', slow: '#f5a623', ema: '#6b7684' };
 
@@ -52,11 +58,7 @@ const candleSeries = chart.addSeries(CandlestickSeries, {
   wickDownColor: COLORS.short,
   borderVisible: false,
 });
-const line = (color: string, title: string) =>
-  chart.addSeries(LineSeries, { color, lineWidth: 2, title, priceLineVisible: false, lastValueVisible: false });
-const fastSeries = line(COLORS.fast, 'JMA fast');
-const slowSeries = line(COLORS.slow, 'JMA slow');
-const emaSeries = line(COLORS.ema, 'EMA 200');
+let lineSeries: ISeriesApi<'Line'>[] = [];
 const markers = createSeriesMarkers(candleSeries, []);
 
 const equityChart = createChart($('equity'), { ...chartOptions, timeScale: { ...chartOptions.timeScale, visible: false } });
@@ -78,24 +80,33 @@ function setStatus(msg: string, error = false) {
 }
 
 function riskParams(): RiskParams {
-  return { ...defaultRisk, leverage: +ui.leverage.value || 1, riskPct: +ui.riskPct.value || 1 };
+  const limit = ui.orderType.value === 'limit';
+  return {
+    ...defaultRisk,
+    leverage: +ui.leverage.value || 1,
+    riskPct: +ui.riskPct.value || 1,
+    feePct: limit ? 0.02 : 0.05,
+    slippagePct: limit ? 0 : 0.02,
+  };
 }
 
-/** Full pipeline: indicators -> candidate signals -> Jev verdicts -> backtest -> render. */
+/** Full pipeline: strategy signals -> Jev verdicts -> backtest -> render. */
 async function analyze(id: number) {
-  const strategy = { ...defaultStrategy, minScore: +ui.minScore.value || defaultStrategy.minScore };
-  const ind = computeIndicators(candles, strategy);
-  const candidates = generateSignals(candles, ind, strategy);
-  const risk = riskParams();
+  const strategy = STRATEGIES.find((s) => s.id === ui.strategy.value) ?? STRATEGIES[0];
+  const out = strategy.build(candles, strategy.defaults);
+  const candidates = out.signals;
+  const risk = { ...riskParams(), ...out.risk };
 
   let jevError: string | null = null;
   if (ui.useJev.checked && candidates.length) {
     try {
+      // Jev always gets the same broad market context, whichever strategy proposed the trade.
+      const context = computeIndicators(candles, defaultStrategy);
       verdicts = await judgeSignals(
         candles,
-        ind,
+        context,
         candidates,
-        { symbol: ui.symbol.value, assetLabel: ASSETS[ui.symbol.value], interval: ui.interval.value },
+        { symbol: ui.symbol.value, assetLabel: ASSETS[ui.symbol.value], interval: ui.interval.value, strategyId: strategy.id },
         (d, n) => id === runId && setStatus(`Jev judging signals ${d}/${n}…`),
       );
     } catch (e) {
@@ -112,34 +123,61 @@ async function analyze(id: number) {
       })
     : candidates;
 
-  const base = backtest(candles, candidates, ind.atr, risk);
-  const filtered = jevOn ? backtest(candles, approved, ind.atr, risk) : base;
+  const base = backtest(candles, candidates, out.atr, risk, out.rules);
+  const filtered = jevOn ? backtest(candles, approved, out.atr, risk, out.rules) : base;
   const split = Math.floor(candles.length * 0.7);
-  const recent = backtest(candles, approved.filter((s) => s.index >= split), ind.atr, risk);
+  const recent = backtest(candles, approved.filter((s) => s.index >= split), out.atr, risk, out.rules);
 
-  render(ind, candidates, approved, filtered.trades, filtered.equity);
-  renderStats(
-    [
-      ['Indicators only', summarize(base, risk.startEquity)],
-      ...(jevOn ? ([['Indicators + Jev', summarize(filtered, risk.startEquity)]] as [string, Stats][]) : []),
-      [`Recent 30%${jevOn ? ' (+Jev)' : ''}`, summarize(recent, risk.startEquity)],
-    ],
-  );
+  render(out, candidates, approved, filtered.trades, filtered.equity);
+  renderStats([
+    ['Strategy', summarize(base, risk.startEquity)],
+    ...(jevOn ? ([['+ Jev', summarize(filtered, risk.startEquity)]] as [string, Stats][]) : []),
+    [`Recent 30%${jevOn ? ' +Jev' : ''}`, summarize(recent, risk.startEquity)],
+  ]);
+  renderWalkForward(strategy.id, strategy.description);
   renderTrades(filtered.trades);
   renderLatest(candidates, approved, jevOn);
   setStatus(
     jevError
-      ? `Jev unavailable (${jevError}); showing indicator-only signals`
+      ? `Jev unavailable (${jevError}); showing strategy signals without Jev`
       : `${candles.length} bars · ${candidates.length} candidates · ${approved.length} signals`,
     !!jevError,
   );
 }
 
-function render(ind: IndicatorSet, candidates: Signal[], approved: Signal[], trades: Trade[], equity: { time: number; value: number }[]) {
+function renderWalkForward(strategyId: string, description: string) {
+  const book = walkforward[ui.orderType.value as 'limit' | 'market'] as Record<
+    string,
+    { trades: number; winRate: number; profitFactor: number; avgR: number }
+  >;
+  const r = book[`${strategyId}:${ui.symbol.value}:${ui.interval.value}`];
+  const body = !r
+    ? '<p class="muted">No walk-forward result for this timeframe.</p>'
+    : r.trades === 0
+      ? '<p class="muted">No parameter set qualified in any training window, so the walk-forward never traded this combination.</p>'
+      : `<table>
+          <tr><td>Trades</td><td>${r.trades}</td></tr>
+          <tr><td>Win rate</td><td>${(r.winRate * 100).toFixed(1)}%</td></tr>
+          <tr><td>Profit factor</td><td class="${r.profitFactor >= 1.2 ? 'long' : r.profitFactor < 1 ? 'short' : ''}">${r.profitFactor.toFixed(2)}</td></tr>
+          <tr><td>Avg R / trade</td><td>${r.avgR.toFixed(2)}</td></tr>
+        </table>`;
+  ui.walkforward.innerHTML = `
+    <h3>Walk-forward (unseen data)</h3>
+    <p class="muted" style="margin:0 0 8px">${description}</p>
+    ${body}
+    <p class="note">Settings tuned on 2 years, tested on the next 6 months, rolled forward since ${
+      ui.symbol.value === 'SOLUSDT' ? '2020' : '2017'
+    }. Only the test periods are counted. ${ui.orderType.value === 'limit' ? 'Limit-order' : 'Market-order'} costs and funding included.</p>`;
+}
+
+function render(out: StrategyOutput, candidates: Signal[], approved: Signal[], trades: Trade[], equity: { time: number; value: number }[]) {
   candleSeries.setData(candles.map((c) => ({ ...c, time: t(c.time) })));
-  fastSeries.setData(toLine(ind.jmaFast));
-  slowSeries.setData(toLine(ind.jmaSlow));
-  emaSeries.setData(toLine(ind.trendEma));
+  for (const s of lineSeries) chart.removeSeries(s);
+  lineSeries = out.lines.map((l) => {
+    const s = chart.addSeries(LineSeries, { color: l.color, lineWidth: 2, title: l.name, priceLineVisible: false, lastValueVisible: false });
+    s.setData(toLine(l.values));
+    return s;
+  });
   equitySeries.setData(equity.map((p) => ({ time: t(p.time), value: p.value })));
 
   const ok = new Set(approved.map((s) => s.index));
@@ -162,12 +200,13 @@ function render(ind: IndicatorSet, candidates: Signal[], approved: Signal[], tra
   }
   for (const tr of trades) {
     if (tr.exitReason === 'reverse' || tr.exitReason === 'end') continue;
+    const label = tr.exitReason === 'liquidation' ? 'LIQ' : `${tr.rMultiple >= 0 ? '+' : ''}${tr.rMultiple.toFixed(1)}R`;
     m.push({
       time: t(tr.exitTime),
       position: tr.side === 'long' ? 'aboveBar' : 'belowBar',
       shape: 'square',
       color: tr.pnl > 0 ? COLORS.long : COLORS.short,
-      text: tr.exitReason === 'liquidation' ? 'LIQ' : `${tr.rMultiple >= 0 ? '+' : ''}${tr.rMultiple.toFixed(1)}R`,
+      text: label,
       size: 0.5,
     });
   }
@@ -219,7 +258,7 @@ function renderLatest(candidates: Signal[], approved: Signal[], jevOn: boolean) 
   ui.latest.innerHTML = `
     <h3>Latest signal</h3>
     <div class="signal-side ${last.side}">${last.side === 'long' ? 'BUY / LONG' : 'SELL / SHORT'}</div>
-    <div class="muted">${new Date(last.time * 1000).toUTCString()} · ${barsAgo} bar${barsAgo === 1 ? '' : 's'} ago · confluence ${last.score}/${last.maxScore}</div>
+    <div class="muted">${new Date(last.time * 1000).toUTCString()} · ${barsAgo} bar${barsAgo === 1 ? '' : 's'} ago</div>
     <ul class="reasons">${last.reasons.map((r) => `<li>${r}</li>`).join('')}</ul>
     ${
       jevOn && v
@@ -275,5 +314,7 @@ async function run() {
 
 ui.run.addEventListener('click', run);
 ui.symbol.addEventListener('change', run);
+ui.strategy.addEventListener('change', run);
+ui.orderType.addEventListener('change', run);
 ui.interval.addEventListener('change', run);
 void run();

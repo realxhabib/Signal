@@ -9,7 +9,8 @@ export default defineConfig(({ mode }) => {
       {
         name: 'jev-proxy',
         configureServer(server) {
-          server.middlewares.use('/api/jev', (req, res) => void handleJev(req, res));
+          // Exact match only: the client also imports the module file /api/jev.ts.
+          server.middlewares.use((req, res, next) => (req.url?.split('?')[0] === '/api/jev' ? void handleJev(req, res) : next()));
         },
       },
     ],

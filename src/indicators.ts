@@ -153,3 +153,86 @@ export function jma(src: number[], len: number, phase = 0, power = 2): number[] 
   }
   return out;
 }
+
+export function stdev(src: number[], len: number): number[] {
+  const mean = sma(src, len);
+  return src.map((_, i) => {
+    if (Number.isNaN(mean[i])) return NaN;
+    let s = 0;
+    for (let j = i - len + 1; j <= i; j++) s += (src[j] - mean[i]) ** 2;
+    return Math.sqrt(s / len);
+  });
+}
+
+export function bollinger(close: number[], len = 20, mult = 2) {
+  const mid = sma(close, len);
+  const sd = stdev(close, len);
+  return { mid, upper: mid.map((m, i) => m + mult * sd[i]), lower: mid.map((m, i) => m - mult * sd[i]) };
+}
+
+export function highest(src: number[], len: number): number[] {
+  return src.map((_, i) => (i < len - 1 ? NaN : Math.max(...src.slice(i - len + 1, i + 1))));
+}
+
+export function lowest(src: number[], len: number): number[] {
+  return src.map((_, i) => (i < len - 1 ? NaN : Math.min(...src.slice(i - len + 1, i + 1))));
+}
+
+/** Supertrend: returns the trailing line and direction (1 = up, -1 = down). */
+export function supertrend(high: number[], low: number[], close: number[], len = 10, mult = 3) {
+  const a = atr(high, low, close, len);
+  const n = close.length;
+  const line = new Array<number>(n).fill(NaN);
+  const dir = new Array<number>(n).fill(NaN);
+  let upper = NaN;
+  let lower = NaN;
+  let d = 1;
+  for (let i = 0; i < n; i++) {
+    if (Number.isNaN(a[i])) continue;
+    const hl2 = (high[i] + low[i]) / 2;
+    const bu = hl2 + mult * a[i];
+    const bl = hl2 - mult * a[i];
+    const prevClose = close[i - 1] ?? close[i];
+    upper = Number.isNaN(upper) || bu < upper || prevClose > upper ? bu : upper;
+    lower = Number.isNaN(lower) || bl > lower || prevClose < lower ? bl : lower;
+    if (d === 1 && close[i] < lower) d = -1;
+    else if (d === -1 && close[i] > upper) d = 1;
+    dir[i] = d;
+    line[i] = d === 1 ? lower : upper;
+  }
+  return { line, dir };
+}
+
+/**
+ * Higher-timeframe series aligned to lower-timeframe bars without look-ahead:
+ * bar i sees the value of the most recent higher-timeframe bar that had fully
+ * closed by the time bar i closed.
+ */
+export function higherTimeframe(
+  times: number[],
+  barSec: number,
+  htfSec: number,
+  close: number[],
+  fn: (htfClose: number[]) => number[],
+): number[] {
+  const htfClose: number[] = [];
+  const htfEnd: number[] = [];
+  for (let i = 0; i < times.length; i++) {
+    const bucket = Math.floor(times[i] / htfSec);
+    const end = (bucket + 1) * htfSec;
+    if (htfEnd.length && htfEnd[htfEnd.length - 1] === end) htfClose[htfClose.length - 1] = close[i];
+    else {
+      htfEnd.push(end);
+      htfClose.push(close[i]);
+    }
+  }
+  const vals = fn(htfClose);
+  const out = new Array<number>(times.length).fill(NaN);
+  let k = -1;
+  for (let i = 0; i < times.length; i++) {
+    const closeTime = times[i] + barSec;
+    while (k + 1 < htfEnd.length && htfEnd[k + 1] <= closeTime) k++;
+    if (k >= 0) out[i] = vals[k];
+  }
+  return out;
+}

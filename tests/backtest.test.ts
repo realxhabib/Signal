@@ -67,3 +67,26 @@ describe('backtest', () => {
     expect(res.trades[0].pnl).toBeLessThan(0);
   });
 });
+
+describe('exit rules', () => {
+  it('exits at the next open when the exit condition fires', () => {
+    const c = flat(10);
+    c[6] = bar(6, 102, 102, 102, 102);
+    const exitLong = c.map((_, i) => i === 5);
+    const t = backtest(c, [sig(2, 'long')], atr1(10), { ...noCosts, takeProfitR: 0 }, { exitLong }).trades[0];
+    expect(t.exitReason).toBe('exit');
+    expect(t.exitIndex).toBe(6);
+    expect(t.exitPrice).toBe(102);
+  });
+
+  it('closes after maxBars', () => {
+    const t = backtest(flat(20), [sig(2, 'long')], atr1(20), { ...noCosts, takeProfitR: 0 }, { maxBars: 4 }).trades[0];
+    expect(t.exitIndex - t.entryIndex).toBe(4);
+  });
+
+  it('charges funding while a position is open', () => {
+    const c = flat(30).map((b, i) => ({ ...b, time: i * 28_800 })); // 8h bars
+    const withFunding = backtest(c, [sig(2, 'long')], atr1(30), { ...noCosts, takeProfitR: 0, fundingPct8h: 0.01 }).trades[0];
+    expect(withFunding.pnl).toBeLessThan(0);
+  });
+});

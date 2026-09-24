@@ -9,8 +9,17 @@ export const defaultRisk: RiskParams = {
   feePct: 0.05,
   slippagePct: 0.02,
   maintenanceMarginPct: 0.5,
+  fundingPct8h: 0.01,
   startEquity: 10_000,
 };
+
+export interface ExitRules {
+  /** Close a long/short at the next open when true on a closed bar. */
+  exitLong?: boolean[];
+  exitShort?: boolean[];
+  /** Close after this many bars in the trade (0 = off). */
+  maxBars?: number;
+}
 
 interface Position {
   side: 'long' | 'short';
@@ -24,6 +33,7 @@ interface Position {
   riskPerUnit: number;
   extreme: number; // best price since entry, for the trailing stop
   entryFee: number;
+  funding: number;
 }
 
 export interface BacktestResult {
@@ -39,7 +49,13 @@ export interface BacktestResult {
  *  - A stop placed beyond the liquidation price is pre-empted by liquidation,
  *    which loses the whole position margin.
  */
-export function backtest(candles: Candle[], signals: Signal[], atrSeries: number[], r: RiskParams): BacktestResult {
+export function backtest(
+  candles: Candle[],
+  signals: Signal[],
+  atrSeries: number[],
+  r: RiskParams,
+  rules: ExitRules = {},
+): BacktestResult {
   const bySignalBar = new Map(signals.map((s) => [s.index, s]));
   const trades: Trade[] = [];
   const equityCurve: { time: number; value: number }[] = [];
@@ -48,6 +64,10 @@ export function backtest(candles: Candle[], signals: Signal[], atrSeries: number
   let pending: Signal | null = null;
   const feeRate = r.feePct / 100;
   const slip = r.slippagePct / 100;
+  const barSec = candles.length > 1 ? candles[1].time - candles[0].time : 0;
+  // Funding is charged to the position holder every bar (conservative: always paid, never received).
+  const fundingPerBar = ((r.fundingPct8h ?? 0) / 100) * (barSec / 28_800);
+  let pendingExit = false;
 
   const close = (i: number, rawPrice: number, reason: Trade['exitReason']) => {
     if (!pos) return;
@@ -56,11 +76,11 @@ export function backtest(candles: Candle[], signals: Signal[], atrSeries: number
     let exitPrice: number;
     if (reason === 'liquidation') {
       exitPrice = pos.liq;
-      pnl = -(pos.qty * pos.entryPrice) / r.leverage - pos.entryFee;
+      pnl = -(pos.qty * pos.entryPrice) / r.leverage - pos.entryFee - pos.funding;
     } else {
       exitPrice = rawPrice * (1 - dir * slip);
       const exitFee = pos.qty * exitPrice * feeRate;
-      pnl = dir * (exitPrice - pos.entryPrice) * pos.qty - pos.entryFee - exitFee;
+      pnl = dir * (exitPrice - pos.entryPrice) * pos.qty - pos.entryFee - exitFee - pos.funding;
     }
     equity += pnl;
     trades.push({
@@ -82,7 +102,9 @@ export function backtest(candles: Candle[], signals: Signal[], atrSeries: number
   for (let i = 0; i < candles.length; i++) {
     const bar = candles[i];
 
-    // 1) Fill a signal confirmed on the previous bar at this bar's open.
+    // 1) Act on decisions made at the previous bar's close, at this bar's open.
+    if (pendingExit && pos) close(i, bar.open, 'exit');
+    pendingExit = false;
     if (pending) {
       const sig = pending;
       pending = null;
@@ -107,12 +129,14 @@ export function backtest(candles: Candle[], signals: Signal[], atrSeries: number
           riskPerUnit: stopDist,
           extreme: entry,
           entryFee: qty * entry * feeRate,
+          funding: 0,
         };
       }
     }
 
     // 2) Manage an open position against this bar's range.
     if (pos) {
+      pos.funding += pos.qty * bar.open * fundingPerBar;
       const long = pos.side === 'long';
       const activeStop = long ? Math.max(pos.stop, pos.trail) : Math.min(pos.stop, pos.trail);
       const stopIsTrail = activeStop !== pos.stop;
@@ -134,7 +158,12 @@ export function backtest(candles: Candle[], signals: Signal[], atrSeries: number
       }
     }
 
-    // 3) Queue any signal confirmed on this bar's close.
+    // 3) Queue exits and signals confirmed on this bar's close.
+    if (pos) {
+      const held = i - pos.entryIndex + 1;
+      const exitArr = pos.side === 'long' ? rules.exitLong : rules.exitShort;
+      if (exitArr?.[i] || (rules.maxBars && held >= rules.maxBars)) pendingExit = true;
+    }
     const sig = bySignalBar.get(i);
     if (sig && (!pos || pos.side !== sig.side)) pending = sig;
 

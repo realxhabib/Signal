@@ -45,7 +45,7 @@ export function buildState(candles: Candle[], ind: IndicatorSet, sig: Signal, as
   return {
     market: `${assetLabel} perpetual futures, ${timeframe} candles`,
     proposed_trade: sig.side,
-    indicator_confluence: `${sig.score}/${sig.maxScore} filters agree: ${sig.reasons.join(', ')}`,
+    indicator_confluence: `${sig.score}/${sig.maxScore} conditions met: ${sig.reasons.join(', ')}`,
     trend: {
       price_vs_ema200_pct: pct(c[i], ind.trendEma[i]),
       ema200_change_last_20_bars_pct: pct(ind.trendEma[i], ind.trendEma[back(20)]),
@@ -152,7 +152,7 @@ export async function judgeSignals(
   candles: Candle[],
   ind: IndicatorSet,
   signals: Signal[],
-  ctx: { symbol: string; assetLabel: string; interval: string },
+  ctx: { symbol: string; assetLabel: string; interval: string; strategyId?: string },
   onProgress?: (done: number, total: number) => void,
 ): Promise<Map<number, JevVerdict>> {
   const out = new Map<number, JevVerdict>();
@@ -160,7 +160,7 @@ export async function judgeSignals(
   const queue = [...signals];
   const worker = async () => {
     for (let sig = queue.shift(); sig; sig = queue.shift()) {
-      const key = `${ctx.symbol}:${ctx.interval}:${sig.time}:${sig.side}`;
+      const key = `${ctx.strategyId ?? ''}:${ctx.symbol}:${ctx.interval}:${sig.time}:${sig.side}`;
       let v = readCache(key);
       if (!v) {
         v = await askJev(buildState(candles, ind, sig, ctx.assetLabel, ctx.interval));
