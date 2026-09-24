@@ -35,6 +35,7 @@ export interface SimOptions {
   maxOpenRiskPct?: number; // skip new trades if total open risk would exceed this
   maxPositions?: number;
   maxShorts?: number; // separate slots for shorts (when set, maxPositions applies to longs only)
+  caps?: (time: number) => { long: number; short: number }; // regime-dependent slots (overrides the two above)
   weight?: (t: PTrade) => number; // extra size multiplier (e.g. from a filter or model)
   priority?: (t: PTrade) => number; // order simultaneous entries (higher first)
   /** Cut risk while the account is in drawdown: full risk above `start`, `minMult` × risk at `full` drawdown or worse. */
@@ -89,8 +90,14 @@ export function simulate(trades: PTrade[], candlesBySym: Map<string, Candle[]>, 
       const w = o.weight ? o.weight(t) : 1;
       if (w <= 0) continue;
       const riskFrac = (o.riskPct / 100) * w * brake;
-      const sameSide = o.maxShorts !== undefined ? open.filter((p) => p.t.side === t.side).length : open.length;
-      const cap = o.maxShorts !== undefined && t.side === 'short' ? o.maxShorts : o.maxPositions;
+      const perSide = o.maxShorts !== undefined || !!o.caps;
+      const sameSide = perSide ? open.filter((p) => p.t.side === t.side).length : open.length;
+      const dyn = o.caps?.(time);
+      const cap = dyn ? (t.side === 'long' ? dyn.long : dyn.short) : o.maxShorts !== undefined && t.side === 'short' ? o.maxShorts : o.maxPositions;
+      if (dyn && cap === 0) {
+        skipped++;
+        continue;
+      }
       if ((cap && sameSide >= cap) || (o.maxOpenRiskPct && openRisk + riskFrac > o.maxOpenRiskPct / 100)) {
         skipped++;
         continue;

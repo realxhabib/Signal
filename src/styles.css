@@ -108,3 +108,9 @@ body.mode-advanced .simple { display: none !important; }
 .signal-list.scan li { cursor: pointer; grid-template-columns: 92px 1fr auto; }
 .signal-list.scan li.current { background: rgba(74, 163, 255, 0.08); }
 .signal-list.scan li:hover { background: rgba(255, 255, 255, 0.04); }
+
+.mode-banner { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 6px; margin: 4px 0 10px; font-size: 12px; }
+.mode-banner span { color: var(--muted); }
+.mode-banner.bull { background: rgba(38, 166, 154, 0.12); color: var(--long); }
+.mode-banner.bear { background: rgba(239, 83, 80, 0.12); color: var(--short); }
+.mode-banner.neutral { background: rgba(138, 148, 163, 0.12); color: var(--text); }

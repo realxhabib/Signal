@@ -1,5 +1,5 @@
 import { backtest, defaultRisk } from './backtest';
-import { composite, RECOMMENDED } from './composite';
+import { ALLOCATION, composite, modeOf, RECOMMENDED } from './composite';
 import { computeFeatures } from './features';
 import type { Candle, Signal, Trade } from './types';
 
@@ -10,12 +10,15 @@ export function btcRegimeByTime(btc: Candle[]): Map<number, number> {
 }
 
 /**
- * Altcoin longs are skipped while Bitcoin itself is in a bearish regime: in the
- * 20-coin portfolio research this cut drawdowns without costing returns.
+ * Market mode from Bitcoin's trend decides which sides may open (see ALLOCATION):
+ * no longs while Bitcoin is bearish, no shorts while it is bullish.
  */
-export function applyBtcGate(signals: Signal[], symbol: string, btcRegime: Map<number, number> | null): Signal[] {
-  if (symbol === 'BTCUSDT' || !btcRegime) return signals;
-  return signals.filter((s) => s.side !== 'long' || btcRegime.get(s.time) !== -1);
+export function applyBtcGate(signals: Signal[], _symbol: string, btcRegime: Map<number, number> | null): Signal[] {
+  if (!btcRegime) return signals;
+  return signals.filter((s) => {
+    const a = ALLOCATION[modeOf(btcRegime.get(s.time))];
+    return s.side === 'long' ? a.longRisk > 0 : a.shortRisk > 0;
+  });
 }
 
 export type CoinStatus =

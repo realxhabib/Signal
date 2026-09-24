@@ -16,12 +16,11 @@ function series(n: number, barSec = 14_400): Candle[] {
 }
 const sig = (index: number, side: 'long' | 'short', time = index): Signal => ({ index, time, side, score: 1, maxScore: 1, reasons: [] });
 
-describe('BTC gate', () => {
-  it('drops altcoin longs while BTC is bearish, keeps shorts and BTC itself', () => {
-    const regime = new Map([[1, -1], [2, 1]]);
-    const s = [sig(1, 'long', 1), sig(1, 'short', 1), sig(2, 'long', 2)];
-    expect(applyBtcGate(s, 'ETHUSDT', regime).map((x) => [x.time, x.side])).toEqual([[1, 'short'], [2, 'long']]);
-    expect(applyBtcGate(s, 'BTCUSDT', regime)).toHaveLength(3);
+describe('market mode gate', () => {
+  it('bear mode: shorts only; bull mode: longs only; neutral: both', () => {
+    const regime = new Map([[1, -1], [2, 1], [3, 0]]);
+    const s = [sig(1, 'long', 1), sig(1, 'short', 1), sig(2, 'long', 2), sig(2, 'short', 2), sig(3, 'long', 3), sig(3, 'short', 3)];
+    expect(applyBtcGate(s, 'ETHUSDT', regime).map((x) => [x.time, x.side])).toEqual([[1, 'short'], [2, 'long'], [3, 'long'], [3, 'short']]);
   });
 });
 
@@ -42,5 +41,25 @@ describe('coin status', () => {
   it('reports a status for any coin', () => {
     const st = coinStatus(series(1000), 'ETHUSDT', null, false);
     expect(['open-now', 'close-now', 'in-trade', 'flat']).toContain(st.kind);
+  });
+});
+
+import { lastMonday, momentumPicks } from '../src/momentum';
+
+describe('momentum sleeve', () => {
+  it('finds the Monday on or before a date', () => {
+    expect(new Date(lastMonday(Date.UTC(2026, 8, 24, 15) / 1000) * 1000).toISOString()).toBe('2026-09-21T00:00:00.000Z');
+    expect(new Date(lastMonday(Date.UTC(2026, 8, 21, 0) / 1000) * 1000).toISOString()).toBe('2026-09-21T00:00:00.000Z');
+  });
+
+  it('longs the strongest and shorts the weakest using only closed days', () => {
+    const day = 86_400;
+    const start = Date.UTC(2026, 7, 1) / 1000;
+    const coin = (growth: number): Candle[] =>
+      Array.from({ length: 40 }, (_, i) => ({ time: start + i * day, open: 1, high: 1, low: 1, close: growth ** i, volume: 1 }));
+    const daily = new Map(Array.from({ length: 10 }, (_, k) => [`C${k}`, coin(1 + (k - 5) / 100)] as [string, Candle[]]));
+    const p = momentumPicks(daily, start + 30 * day)!;
+    expect(p.longs.map((x) => x.symbol)).toEqual(['C9', 'C8', 'C7', 'C6']);
+    expect(p.shorts.map((x) => x.symbol)).toEqual(['C0', 'C1', 'C2', 'C3']);
   });
 });

@@ -12,10 +12,11 @@ import {
 } from 'lightweight-charts';
 import './styles.css';
 import { backtest, defaultRisk, summarize, type BacktestResult, type Stats } from './backtest';
-import { composite, MAX_LONGS, MAX_SHORTS, RECOMMENDED, SHORT_RISK } from './composite';
+import { ALLOCATION, composite, modeOf, RECOMMENDED, type MarketMode } from './composite';
 import { GRADE_SIZE, gradeSignals, type Grade } from './grade';
 import portfolioStats from './portfolioStats.json';
 import { applyBtcGate, btcRegimeByTime, coinStatus, type CoinStatus } from './scan';
+import { lastMonday, MOMENTUM, momentumPicks } from './momentum';
 import { ASSETS, INTERVALS, loadCandles, streamCandles, type Interval } from './data';
 import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from './jev';
 import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './quant';
@@ -47,6 +48,7 @@ const ui = {
   simpleSizing: $<HTMLDivElement>('simpleSizing'),
   scanner: $<HTMLDivElement>('scanner'),
   allowShorts: $<HTMLInputElement>('allowShorts'),
+  momentum: $<HTMLDivElement>('momentum'),
 };
 
 type Mode = 'simple' | 'advanced';
@@ -342,6 +344,18 @@ function stopPrice(tr: Trade, out: StrategyOutput, risk: RiskParams) {
   return tr.entryPrice - (tr.side === 'long' ? 1 : -1) * risk.stopAtr * a;
 }
 
+const MODE_TEXT: Record<MarketMode, string> = {
+  bull: 'Longs only (up to 5). No shorts.',
+  neutral: 'Longs (up to 5) and half-size shorts (up to 3).',
+  bear: 'Shorts only (up to 5, ¾ size). No longs.',
+};
+const modeAt = (time: number | undefined): MarketMode => modeOf(time === undefined ? undefined : btcRegime?.get(time));
+const currentMode = (): MarketMode => modeAt(candles[candles.length - 1]?.time);
+const modeBanner = () => {
+  const mm = currentMode();
+  return `<div class="mode-banner ${mm}"><b>Market mode: ${mm.toUpperCase()}</b><span>${MODE_TEXT[mm]} Set by Bitcoin’s trend.</span></div>`;
+};
+
 const GRADE_TEXT: Record<Grade, string> = {
   A: 'A · strong (top 20% historically)',
   B: 'B · normal',
@@ -363,16 +377,17 @@ function renderSimple(
   const openingNow = pending.signal && (!open || pending.signal.side !== open.side) ? pending.signal : null;
   const side = (s: 'long' | 'short') => (s === 'long' ? 'LONG' : 'SHORT');
   const explain = '<p class="note"><b class="long">LONG</b> = you profit if the price rises. <b class="short">SHORT</b> = you profit if it falls. CLOSE = exit the position.</p>';
-  let sizing: { entry: number; stop: number; grade?: Grade; side: 'long' | 'short' } | null = null;
+  let sizing: { entry: number; stop: number; grade?: Grade; side: 'long' | 'short'; mode: MarketMode } | null = null;
 
   if (openingNow || closingNow) {
     const opening = !!openingNow;
     const s = opening ? openingNow!.side : open!.side;
     const g = opening ? grades.get(openingNow!.index) : undefined;
     const stop = opening ? price - (s === 'long' ? 1 : -1) * risk.stopAtr * out.atr[candles.length - 1] : 0;
-    if (opening) sizing = { entry: price, stop, grade: g, side: s };
+    if (opening) sizing = { entry: price, stop, grade: g, side: s, mode: currentMode() };
     ui.simpleStatus.innerHTML = `
       <h3>${asset} · ${ui.interval.value}</h3>
+      ${modeBanner()}
       <div class="big-status ${opening ? (s === 'long' ? 'long' : 'short') : 'muted'}">${opening ? `OPEN ${side(s)} NOW` : `CLOSE ${side(s)} NOW`}<small>Confirmed at the ${dateText(
         candles[candles.length - 1].time + (candles[1].time - candles[0].time),
       )} close · act at the next open</small></div>
@@ -389,9 +404,10 @@ function renderSimple(
     const stop = stopPrice(open, out, risk);
     const g = grades.get(open.entryIndex - 1);
     const pnl = (((long ? 1 : -1) * (price - open.entryPrice)) / open.entryPrice) * 100;
-    sizing = { entry: open.entryPrice, stop, grade: g, side: open.side };
+    sizing = { entry: open.entryPrice, stop, grade: g, side: open.side, mode: modeAt(candles[open.entryIndex - 1].time) };
     ui.simpleStatus.innerHTML = `
       <h3>${asset} · ${ui.interval.value}</h3>
+      ${modeBanner()}
       <div class="big-status ${long ? 'long' : 'short'}">IN A ${side(open.side)}<small>Opened ${dateText(candles[open.entryIndex].time)}</small></div>
       <dl class="kv">
         <dt>Entry</dt><dd>${money(open.entryPrice)}</dd>
@@ -403,10 +419,11 @@ function renderSimple(
       ${explain}`;
   } else {
     const last = trades[trades.length - 1];
-    const btcBear = ui.symbol.value !== 'BTCUSDT' && btcRegime && [...btcRegime.values()].pop() === -1;
+    const mm = currentMode();
     ui.simpleStatus.innerHTML = `
       <h3>${asset} · ${ui.interval.value}</h3>
-      <div class="big-status muted">NO TRADE<small>${btcBear ? 'Bitcoin’s trend is bearish, so altcoin longs are on hold' : 'Waiting for the next LONG or SHORT signal'}</small></div>
+      ${modeBanner()}
+      <div class="big-status muted">NO TRADE<small>Waiting for the next ${mm === 'bull' ? 'LONG' : mm === 'bear' ? 'SHORT' : 'LONG or SHORT'} signal</small></div>
       ${
         last
           ? `<dl class="kv"><dt>Last trade</dt><dd>${side(last.side)} ${money(last.entryPrice)} → ${money(last.exitPrice)}</dd>
@@ -462,15 +479,17 @@ function renderSimple(
       <div><b>${pf.sharpe.toFixed(2)}</b><span>Sharpe</span></div>
     </div>
     <div class="year-row">${years}</div>
-    <p class="note">Signal Composite on all ${portfolioStats.coins} coins: longs at 1% risk (max ${MAX_LONGS}, paused while Bitcoin is bearish), shorts at 0.5% (max ${MAX_SHORTS})${
+    <p class="note">Signal Composite on all ${portfolioStats.coins} coins, sized by market mode (bull: longs only; neutral: longs + half-size shorts; bear: shorts only)${
       jevOn ? ', Jev able to veto' : ''
     }. Limit-order fees and real funding included; only history after each coin’s first two years counts. *${new Date().getUTCFullYear()} so far. Stress test bad case: −${Math.round(pf.stress.badCaseDrawdown * 100)}% drawdown.</p>`;
 }
 
-function renderSizing(s: { entry: number; stop: number; grade?: Grade; side: 'long' | 'short' } | null) {
+function renderSizing(s: { entry: number; stop: number; grade?: Grade; side: 'long' | 'short'; mode: MarketMode } | null) {
   const pf = portfolioStats.balanced;
   const riskPct = pf.riskPct;
-  const mult = (s?.grade ? GRADE_SIZE[s.grade] : 1) * (s?.side === 'short' ? SHORT_RISK : 1);
+  const alloc = s ? ALLOCATION[s.mode] : null;
+  const sideMult = alloc ? (s!.side === 'short' ? alloc.shortRisk : alloc.longRisk) || 1 : 1;
+  const mult = (s?.grade ? GRADE_SIZE[s.grade] : 1) * sideMult;
   const riskAmt = (accountSize * riskPct * mult) / 100;
   const dist = s ? Math.abs(s.entry - s.stop) : 0;
   const qty = dist ? riskAmt / dist : 0;
@@ -481,13 +500,13 @@ function renderSizing(s: { entry: number; stop: number; grade?: Grade; side: 'lo
     ${
       s
         ? `<dl class="kv">
-            <dt>Risk on this trade</dt><dd>${money(riskAmt)} (${(riskPct * mult).toFixed(2)}%${s.grade ? `, grade ${s.grade}` : ''}${s.side === 'short' ? ', short = half size' : ''})</dd>
+            <dt>Risk on this trade</dt><dd>${money(riskAmt)} (${(riskPct * mult).toFixed(2)}%${s.grade ? `, grade ${s.grade}` : ''}${s.side === 'short' ? `, ${s.mode} mode short × ${sideMult}` : ''})</dd>
             <dt>Position</dt><dd>${qty.toPrecision(4)} ${coin} ≈ ${money(qty * s.entry)}</dd>
             <dt>Margin at 3x</dt><dd>${money((qty * s.entry) / 3)}</dd>
           </dl>`
         : '<p class="muted">Shows how much to buy when a signal is live.</p>'
     }
-    <p class="note">Recommended: risk ${riskPct}% of the account per long and ${riskPct * SHORT_RISK}% per short (${portfolioStats.conservative.riskPct}% / ${portfolioStats.conservative.riskPct * SHORT_RISK}% for smaller swings), at most ${MAX_LONGS} longs and ${MAX_SHORTS} shorts open, exchange leverage 3x (the system averaged ${pf.avgLeverage}x, peak ${pf.peakLeverage}x). If the stop is hit you lose only the “risk” amount.</p>`;
+    <p class="note">Recommended: base risk ${riskPct}% of the account per trade (${portfolioStats.conservative.riskPct}% for smaller swings). Bull mode: longs at 1×, up to 5. Neutral: longs 1× (up to 5) + shorts ½× (up to 3). Bear: shorts ¾× (up to 5), no longs. Exchange leverage 3x is plenty (the system averaged ${pf.avgLeverage}x, peak ${pf.peakLeverage}x). If the stop is hit you lose only the “risk” amount.</p>`;
   $<HTMLInputElement>('acct').addEventListener('change', (e) => {
     accountSize = Math.max(100, Number((e.target as HTMLInputElement).value) || accountSize);
     try {
@@ -497,6 +516,39 @@ function renderSizing(s: { entry: number; stop: number; grade?: Grade; side: 'lo
     }
     renderSizing(s);
   });
+}
+
+let momentumFor = -1;
+async function renderMomentum() {
+  const asOf = lastMonday(Date.now() / 1000);
+  if (momentumFor === asOf) return;
+  momentumFor = asOf;
+  ui.momentum.innerHTML = '<h3>Weekly momentum pair trade</h3><p class="muted">Ranking coins…</p>';
+  const daily = new Map<string, Candle[]>();
+  const queue = Object.keys(ASSETS);
+  await Promise.all(
+    Array.from({ length: 4 }, async () => {
+      for (let sym = queue.shift(); sym; sym = queue.shift()) {
+        try {
+          daily.set(sym, await loadCandles(sym, '1d', 60).catch(() => loadCandles(sym, '1d', 60)));
+        } catch {
+          /* coin skipped */
+        }
+      }
+    }),
+  );
+  const p = momentumPicks(daily, asOf);
+  if (!p) {
+    ui.momentum.innerHTML = '<h3>Weekly momentum pair trade</h3><p class="muted">Not enough data right now.</p>';
+    return;
+  }
+  const row = (x: { symbol: string; ret: number }, cls: string, word: string) =>
+    `<li><span class="pill ${cls}">${word}</span><span>${x.symbol.replace('USDT', '')} <span class="muted">${ASSETS[x.symbol]}</span></span><span class="${x.ret >= 0 ? 'long' : 'short'}">${pctText(x.ret * 100)}</span></li>`;
+  const next = new Date((asOf + 7 * 86_400) * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  ui.momentum.innerHTML = `
+    <h3>Weekly momentum pair trade (optional)</h3>
+    <ul class="signal-list">${p.longs.map((x) => row(x, 'buy', 'LONG')).join('')}${p.shorts.map((x) => row(x, 'sell', 'SHORT')).join('')}</ul>
+    <p class="note">Market-neutral: equal dollars long the ${MOMENTUM.perSide} strongest coins and short the ${MOMENTUM.perSide} weakest (${MOMENTUM.lookbackDays}-day return), refreshed every Monday; next ${next}. It earns from the gap between winners and losers, not from market direction. Suggested size: ${MOMENTUM.share * 100}% of the account, which in testing cut the worst drawdown from 30% to 25%. It was tested on today's top coins, so real results will likely be lower.</p>`;
 }
 
 let scanId = 0;
@@ -666,7 +718,7 @@ async function run() {
     await analyze(id);
     if (mode === 'simple' && scannedInterval !== interval) {
       scannedInterval = interval;
-      void renderScanner();
+      void renderScanner().then(renderMomentum);
     }
     const span = mode === 'simple' ? 120 : 200;
     chart.timeScale().setVisibleLogicalRange({ from: candles.length - span, to: candles.length + 5 });

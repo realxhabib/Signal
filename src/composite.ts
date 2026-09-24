@@ -58,9 +58,17 @@ function overridesFor(p: Record<string, number>, id: string) {
  * isn't bullish, at half the risk of a long and in their own 3 slots.
  */
 export const RECOMMENDED = { mask: 0b000111, threshold: 1, gate: 1, shorts: 1, shortGate: 1, shortMask: 0b000111, stopAtr: 3 };
-export const SHORT_RISK = 0.5; // shorts risk half as much as longs
-export const MAX_LONGS = 5;
-export const MAX_SHORTS = 3;
+/**
+ * Regime-adaptive allocation (research/regime-adaptive.ts, RESULTS-round5.md). Bitcoin's trend sets the
+ * market mode; risk is a multiple of the base risk per trade (1% of the account).
+ */
+export type MarketMode = 'bull' | 'neutral' | 'bear';
+export const ALLOCATION: Record<MarketMode, { longRisk: number; longSlots: number; shortRisk: number; shortSlots: number }> = {
+  bull: { longRisk: 1, longSlots: 5, shortRisk: 0, shortSlots: 0 },
+  neutral: { longRisk: 1, longSlots: 5, shortRisk: 0.5, shortSlots: 3 },
+  bear: { longRisk: 0, longSlots: 0, shortRisk: 0.75, shortSlots: 5 },
+};
+export const modeOf = (regime: number | undefined): MarketMode => (regime === 1 ? 'bull' : regime === -1 ? 'bear' : 'neutral');
 
 const cache = new WeakMap<Candle[], Map<string, { votes: Int8Array[]; regime: Int8Array; atr: number[] }>>();
 const featureCache = new WeakMap<Candle[], ReturnType<typeof computeFeatures>>();

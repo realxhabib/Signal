@@ -19,30 +19,37 @@ generate signals, and [Jev](https://typesafe.ai), TypeSafe AI's System One model
 
 Supertrend, RSI(2) pullback and band reversion vote at every candle. The composite goes **long** when any of them
 wants a long and the coin's trend isn't bearish, goes **short** when any wants a short and the trend isn't bullish,
-and closes when none do (3 ATR protective stop). Altcoin longs also wait while **Bitcoin's** trend is bearish.
-Shorts risk half as much as longs and have their own position slots. Each long gets a **strength grade** (A = top 20% of historical model
-scores, size 1.5×; B = 1×; C = bottom 20%, 0.5×).
+and closes when none do (3 ATR protective stop). Each long gets a **strength grade** (A = top 20% of historical
+model scores, size 1.5×; B = 1×; C = bottom 20%, 0.5×).
+
+**Market mode** (Bitcoin's trend) decides which side the account trades and how big:
+
+| Mode | Longs | Shorts |
+|---|---|---|
+| Bull | 1× risk, up to 5 | none |
+| Neutral | 1× risk, up to 5 | ½× risk, up to 3 |
+| Bear | none | ¾× risk, up to 5 |
 
 Scored on history after each coin's first two years, limit-order fees and **real historical funding** included.
-Designed on BTC/ETH/SOL; the other 17 coins are an out-of-sample test:
+Designed on BTC/ETH/SOL; the other 17 coins are an out-of-sample test: **4h profitable on 20/20 coins, 1h on 19/20.**
 
-- **4h: profitable on 19/20 coins** (win rate 46–63%, profit factor 0.79–4.09; only HBAR lost).
-- **1h: profitable on 18/20** (UNI and BCH roughly break-even).
+### Whole account (20 coins, 4h, `research/portfolio-report.ts`)
 
-### Whole account (20 coins, 4h, `research/portfolio*.ts`)
+| Base risk | 2019* | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026* | Per year | Max DD | Sharpe |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1% | +1% | +159% | +264% | +3% | +113% | +27% | +130% | +27% | 84% | 31% | 1.75 |
+| 0.5% | +1% | +66% | +105% | +2% | +52% | +16% | +63% | +14% | 41% | 17% | 1.72 |
 
-Longs at 1% risk (max 5 open, paused while BTC is bearish), shorts at 0.5% (max 3 open):
+\*partial years. **Every calendar year was positive**, including the 2022 bear market (it was −17% long-only and
+−12% with static shorts). About 8 of 29 quarters still lost money (worst about −14%), so expect losing stretches.
+Average leverage ~0.45x (peak ~2.2x): 3x on the exchange is plenty. Settings are robust: every tested neighbour
+(bear short size 0.75–1.25×, 3–7 slots) had a Sharpe of 1.56–1.75, and all 5-slot variants had no losing year.
 
-| | 2019* | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026* |
-|---|---|---|---|---|---|---|---|---|
-| 1% / 0.5% risk | 0% | +165% | +226% | −12% | +93% | +33% | +128% | +18% |
-| 0.5% / 0.25% risk | 0% | +67% | +94% | −6% | +44% | +19% | +63% | +10% |
-
-\*partial years. Recommended setup: +74%/yr, max drawdown 27%, Sharpe 1.70 (long-only was 72%, 31%, 1.64).
-Average leverage 0.45x (peak 2.2x) — 3x on the exchange is plenty. Most of the return came in bull years; the only
-losing full year was 2022. On 2021–2026 alone the account made ~43%/yr. Sizing by grade (A 1.5× / B 1× / C 0.5×)
-raised the Sharpe further (1.24 → 1.30 on 2021–26, blind grades); a drawdown brake made results worse
-(`research/RESULTS-round4.md`).
+**Optional momentum sleeve.** Each Monday, long the 4 strongest coins and short the 4 weakest (14-day return), equal
+dollars each side. Blind walk-forward: 24%/yr on its own, correlation 0.22 with the main account; 20% of capital in
+it cut the worst drawdown from 30% to 25% (Sharpe 1.82 → 1.87). Tested on today's top coins (survivorship bias), so
+treat it as a diversifier, not a return engine. Funding carry was also tested and dropped (near-zero income since 2022).
+Details: `research/RESULTS-round5.md`.
 
 ## Strategies
 
@@ -136,7 +143,9 @@ and open-interest / long-short metrics (from Dec 2021; `research/futures.ts`, fr
 | Size by volatility? | Yes: risk-based sizing (ATR stop) beat equal notional, Sharpe 1.25 vs 1.18 | `RESULTS-portfolio.md` |
 | How much risk / leverage? | 1% risk, max 5 positions, BTC gate: 72%/yr, 31% max DD; 2% risk has a 71% chance of a 50% drawdown | `RESULTS-portfolio.md` |
 | Better exits? | No. Partial profits, trailing stops, time limits and fixed targets all cut profit; a 2 ATR stop adds return but proportionally more drawdown | `RESULTS-exits.md` |
-| Add shorts? | Thin edge per trade; with their own slots at half risk they improve the account (Sharpe 1.64 → 1.70, DD 31% → 27%). On by default | `RESULTS-round4.md` |
+| Add shorts? | Thin edge per trade; with their own slots at half risk they improve the account (Sharpe 1.64 → 1.70, DD 31% → 27%) | `RESULTS-round4.md` |
+| Profit in bull *and* bear? | Market mode by BTC trend (bull: longs only; bear: shorts only, ¾ size, 5 slots): every year positive, 84%/yr, Sharpe 1.75 | `RESULTS-round5.md` |
+| Market-neutral sleeves? | Momentum (long strong / short weak) diversifies (corr 0.22); funding carry income has dried up | `RESULTS-round5.md` |
 | Futures positioning? | "Retail crowded long" predicts weaker longs (confirmed on 6 holdout coins), but doesn't move the portfolio. Funding / OI filters were noise | `RESULTS-futures-shorts-ml.md` |
 | ML scoring? | Predicting wins picks the low-profit trades (win rate ≠ profit). Predicting profit works: top quintile +0.40R vs ~+0.05R. Shipped as A/B/C grades | `RESULTS-futures-shorts-ml.md` |
 | Overfit? | Every setting nudge stays profitable (PF 1.39–1.71); PBO 30%; 176/189 line-ups profitable; deflated Sharpe says the *exact* pick isn't special, the approach is | `RESULTS-overfitting.md` |

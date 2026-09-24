@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { backtest, defaultRisk } from '../src/backtest';
 import { composite, RECOMMENDED } from '../src/composite';
+import { applyBtcGate, btcRegimeByTime } from '../src/scan';
 import { dataset } from './lib';
 import { UNIVERSE } from './universe';
 import { summarizeR } from './walkforward-stats';
@@ -19,6 +20,8 @@ for (const sym of UNIVERSE)
     const start = d.testStart;
     const years = (c[c.length - 1].time - start) / (365 * 86_400);
     const out = composite.build(c, RECOMMENDED);
+    const btcC = sym === 'BTCUSDT' ? c : (await dataset('BTCUSDT', iv)).candles;
+    out.signals = applyBtcGate(out.signals, sym, btcRegimeByTime(btcC));
     for (const [kind, cost] of Object.entries(costs)) {
       const risk = { ...defaultRisk, leverage: 5, riskPct: 1, ...cost, ...out.risk };
       const st = summarizeR(backtest(c, out.signals, out.atr, risk, { ...out.rules, funding: d.funding }).trades.filter((t) => t.entryTime >= start));
