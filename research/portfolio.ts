@@ -34,7 +34,11 @@ export interface SimOptions {
   sizing: 'risk' | 'equal-notional'; // risk = vol-scaled via ATR stop; equal = same notional for every trade
   maxOpenRiskPct?: number; // skip new trades if total open risk would exceed this
   maxPositions?: number;
+  maxShorts?: number; // separate slots for shorts (when set, maxPositions applies to longs only)
   weight?: (t: PTrade) => number; // extra size multiplier (e.g. from a filter or model)
+  priority?: (t: PTrade) => number; // order simultaneous entries (higher first)
+  /** Cut risk while the account is in drawdown: full risk above `start`, `minMult` × risk at `full` drawdown or worse. */
+  ddBrake?: { start: number; full: number; minMult: number };
 }
 
 export function simulate(trades: PTrade[], candlesBySym: Map<string, Candle[]>, o: SimOptions) {
@@ -48,6 +52,7 @@ export function simulate(trades: PTrade[], candlesBySym: Map<string, Candle[]>, 
   const avgStopPct = trades.reduce((a, t) => a + t.stopDist / t.entryPrice, 0) / trades.length;
 
   let equity = 1;
+  let peakEq = 1;
   const open: { t: PTrade; qty: number; riskAmt: number; last: number }[] = [];
   const curve: { time: number; equity: number }[] = [];
   let taken = 0;
@@ -68,12 +73,25 @@ export function simulate(trades: PTrade[], candlesBySym: Map<string, Candle[]>, 
       }
     };
     settle();
-    for (const t of byEntry.get(time) ?? []) {
+    const entries = [...(byEntry.get(time) ?? [])];
+    if (o.priority) entries.sort((a, b) => o.priority!(b) - o.priority!(a));
+    // Drawdown brake uses the marked-to-market equity from the previous bar.
+    const markedNow = curve.length ? curve[curve.length - 1].equity : equity;
+    peakEq = Math.max(peakEq, markedNow);
+    let brake = 1;
+    if (o.ddBrake) {
+      const dd = 1 - markedNow / peakEq;
+      const { start, full, minMult } = o.ddBrake;
+      brake = dd <= start ? 1 : dd >= full ? minMult : 1 - ((dd - start) / (full - start)) * (1 - minMult);
+    }
+    for (const t of entries) {
       const openRisk = open.reduce((a, p) => a + p.riskAmt, 0) / equity;
       const w = o.weight ? o.weight(t) : 1;
       if (w <= 0) continue;
-      const riskFrac = (o.riskPct / 100) * w;
-      if ((o.maxPositions && open.length >= o.maxPositions) || (o.maxOpenRiskPct && openRisk + riskFrac > o.maxOpenRiskPct / 100)) {
+      const riskFrac = (o.riskPct / 100) * w * brake;
+      const sameSide = o.maxShorts !== undefined ? open.filter((p) => p.t.side === t.side).length : open.length;
+      const cap = o.maxShorts !== undefined && t.side === 'short' ? o.maxShorts : o.maxPositions;
+      if ((cap && sameSide >= cap) || (o.maxOpenRiskPct && openRisk + riskFrac > o.maxOpenRiskPct / 100)) {
         skipped++;
         continue;
       }

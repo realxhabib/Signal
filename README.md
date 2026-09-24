@@ -17,9 +17,10 @@ generate signals, and [Jev](https://typesafe.ai), TypeSafe AI's System One model
 
 ## Signal Composite (best overall)
 
-Supertrend, RSI(2) pullback and band reversion vote at every candle. The composite goes long when any of them
-wants a long and the coin's trend isn't bearish, and closes when none do (3 ATR protective stop). Altcoin longs also
-wait while **Bitcoin's** trend is bearish. Each long gets a **strength grade** (A = top 20% of historical model
+Supertrend, RSI(2) pullback and band reversion vote at every candle. The composite goes **long** when any of them
+wants a long and the coin's trend isn't bearish, goes **short** when any wants a short and the trend isn't bullish,
+and closes when none do (3 ATR protective stop). Altcoin longs also wait while **Bitcoin's** trend is bearish.
+Shorts risk half as much as longs and have their own position slots. Each long gets a **strength grade** (A = top 20% of historical model
 scores, size 1.5×; B = 1×; C = bottom 20%, 0.5×).
 
 Scored on history after each coin's first two years, limit-order fees and **real historical funding** included.
@@ -30,16 +31,18 @@ Designed on BTC/ETH/SOL; the other 17 coins are an out-of-sample test:
 
 ### Whole account (20 coins, 4h, `research/portfolio*.ts`)
 
-1% risk per trade, at most 5 open positions, altcoin longs paused while BTC is bearish:
+Longs at 1% risk (max 5 open, paused while BTC is bearish), shorts at 0.5% (max 3 open):
 
 | | 2019* | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026* |
 |---|---|---|---|---|---|---|---|---|
-| 1% risk | −3% | +163% | +222% | −17% | +108% | +32% | +107% | +17% |
-| 0.5% risk | −1% | +67% | +93% | −8% | +50% | +19% | +55% | +9% |
+| 1% / 0.5% risk | 0% | +165% | +226% | −12% | +93% | +33% | +128% | +18% |
+| 0.5% / 0.25% risk | 0% | +67% | +94% | −6% | +44% | +19% | +63% | +10% |
 
-\*partial years. 1% risk: +72%/yr, max drawdown 31%, Sharpe 1.64, average leverage 0.33x (peak 1.9x). A block
-bootstrap stress test (5,000 five-year paths) puts the bad-case (95th percentile) drawdown at 39%. Most of the
-return came in bull years; the only losing full year was 2022. Leverage 3x on the exchange is plenty.
+\*partial years. Recommended setup: +74%/yr, max drawdown 27%, Sharpe 1.70 (long-only was 72%, 31%, 1.64).
+Average leverage 0.45x (peak 2.2x) — 3x on the exchange is plenty. Most of the return came in bull years; the only
+losing full year was 2022. On 2021–2026 alone the account made ~43%/yr. Sizing by grade (A 1.5× / B 1× / C 0.5×)
+raised the Sharpe further (1.24 → 1.30 on 2021–26, blind grades); a drawdown brake made results worse
+(`research/RESULTS-round4.md`).
 
 ## Strategies
 
@@ -133,7 +136,7 @@ and open-interest / long-short metrics (from Dec 2021; `research/futures.ts`, fr
 | Size by volatility? | Yes: risk-based sizing (ATR stop) beat equal notional, Sharpe 1.25 vs 1.18 | `RESULTS-portfolio.md` |
 | How much risk / leverage? | 1% risk, max 5 positions, BTC gate: 72%/yr, 31% max DD; 2% risk has a 71% chance of a 50% drawdown | `RESULTS-portfolio.md` |
 | Better exits? | No. Partial profits, trailing stops, time limits and fixed targets all cut profit; a 2 ATR stop adds return but proportionally more drawdown | `RESULTS-exits.md` |
-| Add shorts? | Thin edge (~+0.03R/trade on 4h); roughly neutral for the account. Optional toggle | `RESULTS-futures-shorts-ml.md` |
+| Add shorts? | Thin edge per trade; with their own slots at half risk they improve the account (Sharpe 1.64 → 1.70, DD 31% → 27%). On by default | `RESULTS-round4.md` |
 | Futures positioning? | "Retail crowded long" predicts weaker longs (confirmed on 6 holdout coins), but doesn't move the portfolio. Funding / OI filters were noise | `RESULTS-futures-shorts-ml.md` |
 | ML scoring? | Predicting wins picks the low-profit trades (win rate ≠ profit). Predicting profit works: top quintile +0.40R vs ~+0.05R. Shipped as A/B/C grades | `RESULTS-futures-shorts-ml.md` |
 | Overfit? | Every setting nudge stays profitable (PF 1.39–1.71); PBO 30%; 176/189 line-ups profitable; deflated Sharpe says the *exact* pick isn't special, the approach is | `RESULTS-overfitting.md` |

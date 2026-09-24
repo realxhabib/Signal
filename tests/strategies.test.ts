@@ -93,3 +93,22 @@ describe('composite votes', () => {
     }
   });
 });
+
+import { RECOMMENDED } from '../src/composite';
+
+describe('recommended long + short composite', () => {
+  const c = series(2000, 14_400);
+  const out = composite.build(c, RECOMMENDED);
+
+  it('produces both sides and never repaints', () => {
+    const cut = 1500;
+    const prefix = composite.build(c.slice(0, cut), RECOMMENDED).signals;
+    expect(prefix.map((s) => [s.index, s.side])).toEqual(out.signals.filter((s) => s.index < cut).map((s) => [s.index, s.side]));
+  });
+
+  it('never wants a long and a short on the same bar', () => {
+    const exitL = out.rules.exitLong!;
+    const exitS = out.rules.exitShort!;
+    for (let i = 0; i < c.length; i++) expect(!exitL[i] && !exitS[i]).toBe(false);
+  });
+});

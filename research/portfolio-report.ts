@@ -1,24 +1,26 @@
 // Recommended account setup: year-by-year results and stress test, stored for the app.
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { MAX_LONGS, MAX_SHORTS, RECOMMENDED, SHORT_RISK } from '../src/composite';
 import { computeFeatures } from '../src/features';
 import { history } from './history';
 import { fmt } from './lib';
 import { collectTrades, curveStats, monthly, simulate, stress } from './portfolio';
 
 const iv = '4h';
-const { trades, candlesBySym } = await collectTrades(iv);
+const { trades, candlesBySym } = await collectTrades(iv, RECOMMENDED);
 const btc = await history('BTCUSDT', iv);
 const reg = computeFeatures(btc).regime;
 const idx = new Map(btc.map((b, i) => [b.time, i]));
 const gate = (t: (typeof trades)[number]) => {
   const i = idx.get(t.candles[t.entryIndex - 1].time);
+  if (t.side === 'short') return SHORT_RISK;
   return i === undefined || reg[i] !== -1 ? 1 : 0;
 };
 const setups = { conservative: 0.5, balanced: 1 } as const;
-const report: Record<string, unknown> = { coins: candlesBySym.size, interval: iv, maxPositions: 5 };
+const report: Record<string, unknown> = { coins: candlesBySym.size, interval: iv, maxPositions: MAX_LONGS, maxShorts: MAX_SHORTS };
 for (const [name, riskPct] of Object.entries(setups)) {
-  const r = simulate(trades, candlesBySym, { riskPct, sizing: 'risk', maxPositions: 5, weight: gate });
+  const r = simulate(trades, candlesBySym, { riskPct, sizing: 'risk', maxPositions: MAX_LONGS, maxShorts: MAX_SHORTS, weight: gate });
   const s = curveStats(r.curve);
   const years: Record<string, number> = {};
   let y = '';

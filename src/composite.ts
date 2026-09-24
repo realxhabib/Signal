@@ -52,6 +52,16 @@ function overridesFor(p: Record<string, number>, id: string) {
   return o;
 }
 
+/**
+ * The researched account setup (research/shorts-portfolio.ts, RESULTS-round4.md): longs from Supertrend,
+ * RSI(2) pullback and band reversion when the coin isn't bearish; shorts from the same three when it
+ * isn't bullish, at half the risk of a long and in their own 3 slots.
+ */
+export const RECOMMENDED = { mask: 0b000111, threshold: 1, gate: 1, shorts: 1, shortGate: 1, shortMask: 0b000111, stopAtr: 3 };
+export const SHORT_RISK = 0.5; // shorts risk half as much as longs
+export const MAX_LONGS = 5;
+export const MAX_SHORTS = 3;
+
 const cache = new WeakMap<Candle[], Map<string, { votes: Int8Array[]; regime: Int8Array; atr: number[] }>>();
 const featureCache = new WeakMap<Candle[], ReturnType<typeof computeFeatures>>();
 function componentVotes(candles: Candle[], withShorts: boolean, p: Record<string, number> = {}) {
@@ -91,21 +101,28 @@ export const composite: StrategyDef = {
     const enabled = all.filter((_, k) => p.mask & (1 << k));
     const names = COMPONENTS.filter((_, k) => p.mask & (1 << k)).map((s) => s.name);
     const n = c.length;
-    const score = new Int8Array(n);
-    for (const v of enabled) for (let i = 0; i < n; i++) score[i] += v[i];
+    // Longs are counted over `mask`; shorts over `shortMask` (defaults to the same strategies).
+    const shortMask = p.shortMask ?? p.mask;
+    const shortVoters = all.filter((_, k) => shortMask & (1 << k));
+    const longCount = new Int8Array(n);
+    const shortCount = new Int8Array(n);
+    for (const v of enabled) for (let i = 0; i < n; i++) if (v[i] === 1) longCount[i]++;
+    for (const v of shortVoters) for (let i = 0; i < n; i++) if (v[i] === -1) shortCount[i]++;
     const gateLong = (i: number) => (p.gate === 2 ? regime[i] === 1 : p.gate === 1 ? regime[i] !== -1 : true);
     // Shorts: shortGate 2 = bear regime only (default), 1 = anything but a bull regime.
     const gateShort = (i: number) => ((p.shortGate ?? 2) === 2 ? regime[i] === -1 : regime[i] !== 1);
-    const wantLong = (i: number) => score[i] >= p.threshold && gateLong(i);
-    const wantShort = (i: number) => !!p.shorts && -score[i] >= p.threshold && gateShort(i);
+    const wantLong = (i: number) => longCount[i] >= p.threshold && gateLong(i);
+    const wantShort = (i: number) => !!p.shorts && shortCount[i] >= p.threshold && !wantLong(i) && gateShort(i);
 
     const signals: Signal[] = [];
+    const shortNames = COMPONENTS.filter((_, k) => shortMask & (1 << k)).map((s) => s.name);
     for (let i = 1; i < n; i++) {
-      const reasons = (dir: number) => names.filter((_, k) => enabled[k][i] === dir);
+      const reasons = (dir: number) =>
+        dir === 1 ? names.filter((_, k) => enabled[k][i] === 1) : shortNames.filter((_, k) => shortVoters[k][i] === -1);
       if (wantLong(i) && !wantLong(i - 1))
-        signals.push({ index: i, time: c[i].time, side: 'long', score: score[i], maxScore: enabled.length, reasons: reasons(1) });
+        signals.push({ index: i, time: c[i].time, side: 'long', score: longCount[i], maxScore: enabled.length, reasons: reasons(1) });
       else if (wantShort(i) && !wantShort(i - 1))
-        signals.push({ index: i, time: c[i].time, side: 'short', score: -score[i], maxScore: enabled.length, reasons: reasons(-1) });
+        signals.push({ index: i, time: c[i].time, side: 'short', score: shortCount[i], maxScore: shortVoters.length, reasons: reasons(-1) });
     }
     const close = c.map((b) => b.close);
     return {

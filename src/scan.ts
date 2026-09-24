@@ -1,5 +1,5 @@
 import { backtest, defaultRisk } from './backtest';
-import { composite } from './composite';
+import { composite, RECOMMENDED } from './composite';
 import { computeFeatures } from './features';
 import type { Candle, Signal, Trade } from './types';
 
@@ -26,7 +26,7 @@ export type CoinStatus =
 
 /** Current Signal Composite status for one coin (used by the all-coins scanner). */
 export function coinStatus(c: Candle[], symbol: string, btcRegime: Map<number, number> | null, allowShorts: boolean): CoinStatus {
-  const p = { ...composite.defaults, shorts: allowShorts ? 1 : 0, shortGate: 1 };
+  const p = allowShorts ? RECOMMENDED : { ...RECOMMENDED, shorts: 0 };
   const out = composite.build(c, p);
   const signals = applyBtcGate(out.signals, symbol, btcRegime);
   const res = backtest(c, signals, out.atr, { ...defaultRisk, feePct: 0.02, slippagePct: 0, ...out.risk }, out.rules);
