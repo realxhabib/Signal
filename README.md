@@ -27,7 +27,7 @@ each coin's first two years, limit-order fees and funding included:
 Versus Supertrend alone it trades 3–4× more often with a much higher win rate (Supertrend wins ~35–40%) for similar
 total profit. The line-up was chosen after comparing fixed line-ups across coins, so treat these numbers as slightly
 optimistic. A fully blind walk-forward that re-picks the line-up every 6 months from all 63 combinations was still
-profitable on 1h for all three coins (PF 1.34–1.51). `npm run composite` regenerates the numbers.
+profitable on 1h for all three coins (PF 1.34–1.51; see [`research/RESULTS-composite-walkforward.md`](research/RESULTS-composite-walkforward.md)). `npm run composite` regenerates the numbers.
 
 ## Strategies
 
