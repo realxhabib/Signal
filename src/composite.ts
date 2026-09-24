@@ -20,8 +20,9 @@ export const COMPONENTS: StrategyDef[] = [supertrendTrend, rsi2Pullback, bandRev
  * decided to open) a long, -1 for a short, 0 when flat. Derived from its own
  * backtest, so it only ever reflects information available at that close.
  */
-export function votes(candles: Candle[], s: StrategyDef): Int8Array {
-  const out = s.build(candles, s.defaults);
+export function votes(candles: Candle[], s: StrategyDef, withShorts = false, overrides: Record<string, number> = {}): Int8Array {
+  const params = { ...s.defaults, ...overrides, ...(withShorts && 'shorts' in s.defaults ? { shorts: 1 } : {}) };
+  const out = s.build(candles, params);
   const { trades, pending } = backtest(candles, out.signals, out.atr, { ...defaultRisk, ...out.risk }, out.rules);
   const v = new Int8Array(candles.length);
   const n = candles.length;
@@ -41,13 +42,28 @@ export function votes(candles: Candle[], s: StrategyDef): Int8Array {
   return v;
 }
 
-const cache = new WeakMap<Candle[], { votes: Int8Array[]; regime: Int8Array; atr: number[] }>();
-function componentVotes(candles: Candle[]) {
-  let hit = cache.get(candles);
+/**
+ * Component settings can be overridden through composite params named
+ * "<component id>.<param>", e.g. { 'supertrend.stMult': 4 } (used by the robustness research).
+ */
+function overridesFor(p: Record<string, number>, id: string) {
+  const o: Record<string, number> = {};
+  for (const [k, v] of Object.entries(p)) if (k.startsWith(id + '.')) o[k.slice(id.length + 1)] = v;
+  return o;
+}
+
+const cache = new WeakMap<Candle[], Map<string, { votes: Int8Array[]; regime: Int8Array; atr: number[] }>>();
+const featureCache = new WeakMap<Candle[], ReturnType<typeof computeFeatures>>();
+function componentVotes(candles: Candle[], withShorts: boolean, p: Record<string, number> = {}) {
+  let byMode = cache.get(candles);
+  if (!byMode) cache.set(candles, (byMode = new Map()));
+  const key = `${withShorts}|${Object.entries(p).filter(([k]) => k.includes('.')).sort().join(';')}`;
+  let hit = byMode.get(key);
   if (!hit) {
-    const f = computeFeatures(candles);
-    hit = { votes: COMPONENTS.map((s) => votes(candles, s)), regime: f.regime, atr: f.atr };
-    cache.set(candles, hit);
+    let f = featureCache.get(candles);
+    if (!f) featureCache.set(candles, (f = computeFeatures(candles)));
+    hit = { votes: COMPONENTS.map((s) => votes(candles, s, withShorts, overridesFor(p, s.id))), regime: f.regime, atr: f.atr };
+    byMode.set(key, hit);
   }
   return hit;
 }
@@ -62,7 +78,7 @@ export const composite: StrategyDef = {
   name: 'Signal Composite',
   description:
     'Supertrend, RSI(2) pullback and band reversion vote every bar. It buys when any of them is long and the trend is not bearish, and sells when none are.',
-  defaults: { mask: 0b000111, threshold: 1, gate: 1, shorts: 0, stopAtr: 3 },
+  defaults: { mask: 0b000111, threshold: 1, gate: 1, shorts: 0, shortGate: 2, stopAtr: 3 },
   grid: {
     mask: Array.from({ length: 63 }, (_, k) => k + 1),
     threshold: [1, 2, 3],
@@ -71,14 +87,15 @@ export const composite: StrategyDef = {
     stopAtr: [3],
   },
   build(c, p) {
-    const { votes: all, regime, atr } = componentVotes(c);
+    const { votes: all, regime, atr } = componentVotes(c, !!p.shorts, p);
     const enabled = all.filter((_, k) => p.mask & (1 << k));
     const names = COMPONENTS.filter((_, k) => p.mask & (1 << k)).map((s) => s.name);
     const n = c.length;
     const score = new Int8Array(n);
     for (const v of enabled) for (let i = 0; i < n; i++) score[i] += v[i];
     const gateLong = (i: number) => (p.gate === 2 ? regime[i] === 1 : p.gate === 1 ? regime[i] !== -1 : true);
-    const gateShort = (i: number) => (p.gate === 2 ? regime[i] === -1 : p.gate === 1 ? regime[i] !== 1 : true);
+    // Shorts: shortGate 2 = bear regime only (default), 1 = anything but a bull regime.
+    const gateShort = (i: number) => ((p.shortGate ?? 2) === 2 ? regime[i] === -1 : regime[i] !== 1);
     const wantLong = (i: number) => score[i] >= p.threshold && gateLong(i);
     const wantShort = (i: number) => !!p.shorts && -score[i] >= p.threshold && gateShort(i);
 

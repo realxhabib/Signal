@@ -10,7 +10,8 @@
     "typecheck": "tsc",
     "research": "TARGET_WIN=0 FEE=0.05 SLIP=0.02 OUT=RESULTS-market.md tsx research/walkforward.ts && TARGET_WIN=0 FEE=0.02 SLIP=0 OUT=RESULTS-limit.md tsx research/walkforward.ts",
     "mine": "tsx research/mine.ts",
-    "composite": "tsx research/composite.ts"
+    "composite": "tsx research/composite.ts",
+    "jev-eval": "tsx research/jev-eval.ts"
   },
   "repository": {
     "type": "git",

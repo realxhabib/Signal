@@ -13,6 +13,9 @@ import {
 import './styles.css';
 import { backtest, defaultRisk, summarize, type BacktestResult, type Stats } from './backtest';
 import { composite } from './composite';
+import { GRADE_SIZE, gradeSignals, type Grade } from './grade';
+import portfolioStats from './portfolioStats.json';
+import { applyBtcGate, btcRegimeByTime, coinStatus, type CoinStatus } from './scan';
 import { ASSETS, INTERVALS, loadCandles, streamCandles, type Interval } from './data';
 import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from './jev';
 import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './quant';
@@ -41,6 +44,9 @@ const ui = {
   simpleStatus: $<HTMLDivElement>('simpleStatus'),
   simpleSignals: $<HTMLDivElement>('simpleSignals'),
   simpleRecord: $<HTMLDivElement>('simpleRecord'),
+  simpleSizing: $<HTMLDivElement>('simpleSizing'),
+  scanner: $<HTMLDivElement>('scanner'),
+  allowShorts: $<HTMLInputElement>('allowShorts'),
 };
 
 type Mode = 'simple' | 'advanced';
@@ -83,6 +89,14 @@ const equitySeries = equityChart.addSeries(LineSeries, { color: COLORS.fast, lin
 chart.timeScale().subscribeVisibleLogicalRangeChange((r) => r && equityChart.timeScale().setVisibleLogicalRange(r));
 
 let candles: Candle[] = [];
+let btcRegime: Map<number, number> | null = null;
+let grades = new Map<number, Grade>();
+let accountSize = 10_000;
+try {
+  accountSize = Number(localStorage.getItem('signal-account')) || accountSize;
+} catch {
+  /* storage unavailable */
+}
 let verdicts = new Map<number, JevVerdict>();
 let stopStream: (() => void) | null = null;
 let runId = 0;
@@ -117,19 +131,24 @@ function riskParams(): RiskParams {
 /** Full pipeline: strategy signals -> Jev verdicts -> backtest -> render. */
 async function analyze(id: number) {
   const strategy = STRATEGIES.find((s) => s.id === ui.strategy.value) ?? STRATEGIES[0];
-  const out = strategy.build(candles, strategy.defaults, { symbol: ui.symbol.value, interval: ui.interval.value });
+  const isComposite = strategy.id === composite.id;
+  const shorts = isComposite && mode === 'advanced' && ui.allowShorts.checked;
+  const params = isComposite ? { ...strategy.defaults, shorts: shorts ? 1 : 0, shortGate: 1 } : strategy.defaults;
+  const out = strategy.build(candles, params, { symbol: ui.symbol.value, interval: ui.interval.value });
   const candidates = out.signals;
+  // Altcoin longs wait while Bitcoin's own trend is bearish (composite only).
+  const gated = isComposite ? applyBtcGate(candidates, ui.symbol.value, btcRegime) : candidates;
   const risk = { ...riskParams(), ...out.risk };
 
   let jevError: string | null = null;
-  if (ui.useJev.checked && candidates.length) {
+  if (ui.useJev.checked && gated.length) {
     try {
       // Jev always gets the same broad market context, whichever strategy proposed the trade.
       const context = computeIndicators(candles, defaultStrategy);
       verdicts = await judgeSignals(
         candles,
         context,
-        candidates,
+        gated,
         { symbol: ui.symbol.value, assetLabel: ASSETS[ui.symbol.value], interval: ui.interval.value, strategyId: strategy.id },
         (d, n) => id === runId && setStatus(`Jev judging signals ${d}/${n}…`),
       );
@@ -141,13 +160,14 @@ async function analyze(id: number) {
 
   const jevOn = ui.useJev.checked && !jevError;
   const approved = jevOn
-    ? candidates.filter((s) => {
+    ? gated.filter((s) => {
         const v = verdicts.get(s.index);
         return v && approves(v, s.side, defaultJevThresholds);
       })
-    : candidates;
+    : gated;
+  grades = isComposite ? gradeSignals(candles, approved) : new Map();
 
-  const base = backtest(candles, candidates, out.atr, risk, out.rules);
+  const base = backtest(candles, gated, out.atr, risk, out.rules);
   const filtered = jevOn ? backtest(candles, approved, out.atr, risk, out.rules) : base;
   const split = Math.floor(candles.length * 0.7);
   const recent = backtest(candles, approved.filter((s) => s.index >= split), out.atr, risk, out.rules);
@@ -251,17 +271,19 @@ function render(
   });
   equitySeries.setData(equity.map((p) => ({ time: t(p.time), value: p.value })));
 
-  // Clear entry and exit points for every trade.
+  // Clear entry and exit points for every trade: LONG = profits if price rises, SHORT = profits if it falls.
   const size = simple ? 2 : 1;
   const m: SeriesMarker<Time>[] = [];
+  const word = (side: 'long' | 'short') => (side === 'long' ? 'LONG' : 'SHORT');
   for (const tr of trades) {
     const long = tr.side === 'long';
+    const g = grades.get(tr.entryIndex - 1);
     m.push({
       time: t(candles[tr.entryIndex].time),
       position: long ? 'belowBar' : 'aboveBar',
       shape: long ? 'arrowUp' : 'arrowDown',
       color: long ? COLORS.long : COLORS.short,
-      text: simple ? (long ? 'BUY' : 'SHORT') : `${long ? 'BUY' : 'SHORT'} ${money(tr.entryPrice)}`,
+      text: `${word(tr.side)}${g ? ` ${g}` : ''}${simple ? '' : ` ${money(tr.entryPrice)}`}`,
       size,
     });
     if (tr.exitReason === 'end') continue; // still open
@@ -272,7 +294,7 @@ function render(
       position: long ? 'aboveBar' : 'belowBar',
       shape: long ? 'arrowDown' : 'arrowUp',
       color: pct >= 0 ? '#f5a623' : COLORS.short,
-      text: simple ? `${long ? 'SELL' : 'COVER'} ${pctText(pct)}` : `${long ? 'SELL' : 'COVER'} ${money(tr.exitPrice)} ${pctText(pct)}${why}`,
+      text: simple ? `CLOSE ${pctText(pct)}` : `CLOSE ${word(tr.side)} ${money(tr.exitPrice)} ${pctText(pct)}${why}`,
       size,
     });
   }
@@ -281,11 +303,12 @@ function render(
   const open0 = openTrade(trades);
   if (open0 && (pending.exit || (pending.signal && pending.signal.side !== open0.side))) {
     const long = open0.side === 'long';
-    m.push({ time: lastTime, position: long ? 'aboveBar' : 'belowBar', shape: long ? 'arrowDown' : 'arrowUp', color: '#f5a623', text: `${long ? 'SELL' : 'COVER'} at next open`, size });
+    m.push({ time: lastTime, position: long ? 'aboveBar' : 'belowBar', shape: long ? 'arrowDown' : 'arrowUp', color: '#f5a623', text: `CLOSE ${word(open0.side)} at next open`, size });
   }
   if (pending.signal && (!open0 || pending.signal.side !== open0.side)) {
     const long = pending.signal.side === 'long';
-    m.push({ time: lastTime, position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown', color: long ? COLORS.long : COLORS.short, text: `${long ? 'BUY' : 'SHORT'} at next open`, size });
+    const g = grades.get(pending.signal.index);
+    m.push({ time: lastTime, position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown', color: long ? COLORS.long : COLORS.short, text: `${word(pending.signal.side)}${g ? ` ${g}` : ''} at next open`, size });
   }
   if (!simple) {
     // Signals the Jev filter vetoed.
@@ -319,6 +342,12 @@ function stopPrice(tr: Trade, out: StrategyOutput, risk: RiskParams) {
   return tr.entryPrice - (tr.side === 'long' ? 1 : -1) * risk.stopAtr * a;
 }
 
+const GRADE_TEXT: Record<Grade, string> = {
+  A: 'A · strong (top 20% historically)',
+  B: 'B · normal',
+  C: 'C · weak (bottom 20%)',
+};
+
 function renderSimple(
   strategyId: string,
   trades: Trade[],
@@ -332,51 +361,69 @@ function renderSimple(
   const asset = ASSETS[ui.symbol.value];
   const closingNow = open && (pending.exit || (pending.signal && pending.signal.side !== open.side));
   const openingNow = pending.signal && (!open || pending.signal.side !== open.side) ? pending.signal : null;
+  const side = (s: 'long' | 'short') => (s === 'long' ? 'LONG' : 'SHORT');
+  const explain = '<p class="note"><b class="long">LONG</b> = you profit if the price rises. <b class="short">SHORT</b> = you profit if it falls. CLOSE = exit the position.</p>';
+  let sizing: { entry: number; stop: number; grade?: Grade } | null = null;
+
   if (openingNow || closingNow) {
-    const buy = openingNow ? openingNow.side === 'long' : open!.side === 'short';
-    const word = openingNow ? (openingNow.side === 'long' ? 'BUY NOW' : 'SHORT NOW') : open!.side === 'long' ? 'SELL NOW' : 'COVER NOW';
+    const opening = !!openingNow;
+    const s = opening ? openingNow!.side : open!.side;
+    const g = opening ? grades.get(openingNow!.index) : undefined;
+    const stop = opening ? price - (s === 'long' ? 1 : -1) * risk.stopAtr * out.atr[candles.length - 1] : 0;
+    if (opening) sizing = { entry: price, stop, grade: g };
     ui.simpleStatus.innerHTML = `
       <h3>${asset} · ${ui.interval.value}</h3>
-      <div class="big-status ${buy ? 'long' : 'short'}">${word}<small>Confirmed at the ${dateText(candles[candles.length - 1].time + (candles[1].time - candles[0].time))} close · act at the next open</small></div>
+      <div class="big-status ${opening ? (s === 'long' ? 'long' : 'short') : 'muted'}">${opening ? `OPEN ${side(s)} NOW` : `CLOSE ${side(s)} NOW`}<small>Confirmed at the ${dateText(
+        candles[candles.length - 1].time + (candles[1].time - candles[0].time),
+      )} close · act at the next open</small></div>
       <dl class="kv">
         <dt>Last close</dt><dd>${money(price)}</dd>
-        ${openingNow ? `<dt>Planned stop</dt><dd class="short">${money(price - (openingNow.side === 'long' ? 1 : -1) * risk.stopAtr * out.atr[candles.length - 1])}</dd>` : ''}
-        ${closingNow && open ? `<dt>Trade result</dt><dd class="${(open.side === 'long' ? price - open.entryPrice : open.entryPrice - price) >= 0 ? 'long' : 'short'}">${pctText((((open.side === 'long' ? 1 : -1) * (price - open.entryPrice)) / open.entryPrice) * 100)} so far</dd>` : ''}
+        ${opening ? `<dt>Stop</dt><dd class="short">${money(stop)} (${pctText(((stop - price) / price) * 100)})</dd>` : ''}
+        ${g ? `<dt>Signal strength</dt><dd>${GRADE_TEXT[g]}</dd>` : ''}
+        ${!opening && open ? `<dt>Trade result</dt><dd class="${(open.side === 'long' ? price - open.entryPrice : open.entryPrice - price) >= 0 ? 'long' : 'short'}">${pctText((((open.side === 'long' ? 1 : -1) * (price - open.entryPrice)) / open.entryPrice) * 100)} so far</dd>` : ''}
       </dl>
-      ${openingNow ? `<ul class="reasons">${openingNow.reasons.map((r) => `<li>${r}</li>`).join('')}</ul>` : ''}`;
+      ${opening ? `<ul class="reasons">${openingNow!.reasons.map((r) => `<li>${r}</li>`).join('')}</ul>` : ''}
+      ${explain}`;
   } else if (open) {
     const long = open.side === 'long';
     const stop = stopPrice(open, out, risk);
+    const g = grades.get(open.entryIndex - 1);
     const pnl = (((long ? 1 : -1) * (price - open.entryPrice)) / open.entryPrice) * 100;
+    sizing = { entry: open.entryPrice, stop, grade: g };
     ui.simpleStatus.innerHTML = `
       <h3>${asset} · ${ui.interval.value}</h3>
-      <div class="big-status ${long ? 'long' : 'short'}">${long ? 'IN A BUY' : 'IN A SHORT'}<small>Opened ${dateText(candles[open.entryIndex].time)}</small></div>
+      <div class="big-status ${long ? 'long' : 'short'}">IN A ${side(open.side)}<small>Opened ${dateText(candles[open.entryIndex].time)}</small></div>
       <dl class="kv">
         <dt>Entry</dt><dd>${money(open.entryPrice)}</dd>
         <dt>Now</dt><dd class="${pnl >= 0 ? 'long' : 'short'}">${money(price)} (${pctText(pnl)})</dd>
         <dt>Stop</dt><dd class="short">${money(stop)} (${pctText((((long ? 1 : -1) * (stop - open.entryPrice)) / open.entryPrice) * 100)})</dd>
+        ${g ? `<dt>Signal strength</dt><dd>${GRADE_TEXT[g]}</dd>` : ''}
       </dl>
-      <p class="note">It sells when none of its strategies still want the trade, the trend turns bearish, or the stop is hit. A SELL arrow appears on the chart when that happens.</p>`;
+      <p class="note">It closes when none of its strategies still want the trade, the trend turns against it, or the stop is hit. A CLOSE arrow appears on the chart when that happens.</p>
+      ${explain}`;
   } else {
     const last = trades[trades.length - 1];
+    const btcBear = ui.symbol.value !== 'BTCUSDT' && btcRegime && [...btcRegime.values()].pop() === -1;
     ui.simpleStatus.innerHTML = `
       <h3>${asset} · ${ui.interval.value}</h3>
-      <div class="big-status muted">NO TRADE<small>Waiting for the next BUY signal</small></div>
+      <div class="big-status muted">NO TRADE<small>${btcBear ? 'Bitcoin’s trend is bearish, so altcoin longs are on hold' : 'Waiting for the next LONG signal'}</small></div>
       ${
         last
-          ? `<dl class="kv"><dt>Last trade</dt><dd>${last.side === 'long' ? 'BUY' : 'SHORT'} ${money(last.entryPrice)} → ${money(last.exitPrice)}</dd>
+          ? `<dl class="kv"><dt>Last trade</dt><dd>${side(last.side)} ${money(last.entryPrice)} → ${money(last.exitPrice)}</dd>
              <dt>Result</dt><dd class="${tradePct(last) >= 0 ? 'long' : 'short'}">${pctText(tradePct(last))}</dd>
              <dt>Closed</dt><dd>${dateText(candles[last.exitIndex].time)}</dd></dl>`
           : ''
       }
-      <p class="note">Signals are only confirmed when a candle closes, so an arrow never disappears once it is drawn.</p>`;
+      <p class="note">Signals are only confirmed when a candle closes, so an arrow never disappears once it is drawn.</p>
+      ${explain}`;
   }
+  renderSizing(sizing);
 
-  const events: { time: number; kind: 'BUY' | 'SELL' | 'SHORT' | 'COVER'; price: number; pct?: number }[] = [];
+  const events: { time: number; kind: string; cls: string; price: number; pct?: number }[] = [];
   for (const tr of trades) {
-    const long = tr.side === 'long';
-    events.push({ time: candles[tr.entryIndex].time, kind: long ? 'BUY' : 'SHORT', price: tr.entryPrice });
-    if (tr.exitReason !== 'end') events.push({ time: candles[tr.exitIndex].time, kind: long ? 'SELL' : 'COVER', price: tr.exitPrice, pct: tradePct(tr) });
+    const g = grades.get(tr.entryIndex - 1);
+    events.push({ time: candles[tr.entryIndex].time, kind: `${side(tr.side)}${g ? ' ' + g : ''}`, cls: tr.side === 'long' ? 'buy' : 'sell', price: tr.entryPrice });
+    if (tr.exitReason !== 'end') events.push({ time: candles[tr.exitIndex].time, kind: 'CLOSE', cls: 'close', price: tr.exitPrice, pct: tradePct(tr) });
   }
   ui.simpleSignals.innerHTML = `
     <h3>Latest signals</h3>
@@ -384,7 +431,7 @@ function renderSimple(
       .slice(-8)
       .reverse()
       .map(
-        (e) => `<li><span class="pill ${e.kind === 'BUY' || e.kind === 'COVER' ? 'buy' : 'sell'}">${e.kind}</span>
+        (e) => `<li><span class="pill ${e.cls}">${e.kind}</span>
           <span>${money(e.price)} <span class="muted">· ${dateText(e.time)}</span></span>
           <span class="${e.pct === undefined ? 'muted' : e.pct >= 0 ? 'long' : 'short'}">${e.pct === undefined ? '' : pctText(e.pct)}</span></li>`,
       )
@@ -393,17 +440,121 @@ function renderSimple(
   const r = (walkforward.limit as Record<string, { trades: number; winRate: number; profitFactor: number; perYear?: number }>)[
     `${strategyId}:${ui.symbol.value}:${ui.interval.value}`
   ];
-  ui.simpleRecord.innerHTML = r
-    ? `<h3>Track record (tested on unseen history)</h3>
+  const pf = portfolioStats.balanced;
+  const years = Object.entries(pf.years)
+    .map(([y, v]) => `<div><b class="${v >= 0 ? 'long' : 'short'}">${v >= 0 ? '+' : ''}${Math.round(v * 100)}%</b><span>${y.replace(' YTD', '*')}</span></div>`)
+    .join('');
+  ui.simpleRecord.innerHTML = `
+    ${
+      r
+        ? `<h3>${asset} ${ui.interval.value} track record</h3>
        <div class="stat-row">
          <div><b>${(r.winRate * 100).toFixed(0)}%</b><span>trades won</span></div>
          <div><b>${r.perYear ? r.perYear.toFixed(0) : r.trades}</b><span>${r.perYear ? 'trades / year' : 'trades'}</span></div>
          <div><b class="${r.profitFactor >= 1.2 ? 'long' : r.profitFactor < 1 ? 'short' : ''}">${r.profitFactor.toFixed(2)}</b><span>profit factor</span></div>
-       </div>
-       <p class="note">Signal Composite: Supertrend, RSI(2) pullback and band reversion working together, long only, never in a bearish trend${
-         jevOn ? ', with Jev able to veto' : ''
-       }. Measured with limit-order fees and funding on history after each coin's first two years. It will still have losing streaks; size positions so a string of stops is survivable.</p>`
-    : '';
+       </div>`
+        : ''
+    }
+    <h3 style="margin-top:14px">Whole account, ${portfolioStats.coins} coins (4h)</h3>
+    <div class="stat-row">
+      <div><b class="long">+${Math.round(pf.cagr * 100)}%</b><span>per year</span></div>
+      <div><b class="short">−${Math.round(pf.maxDrawdown * 100)}%</b><span>worst drawdown</span></div>
+      <div><b>${pf.sharpe.toFixed(2)}</b><span>Sharpe</span></div>
+    </div>
+    <div class="year-row">${years}</div>
+    <p class="note">Signal Composite on all ${portfolioStats.coins} coins, 1% risk per trade, at most ${portfolioStats.maxPositions} positions, altcoin longs paused while Bitcoin is bearish${
+      jevOn ? ', Jev able to veto' : ''
+    }. Limit-order fees and real funding included; only history after each coin’s first two years counts. *${new Date().getUTCFullYear()} so far. Stress test bad case: −${Math.round(pf.stress.badCaseDrawdown * 100)}% drawdown.</p>`;
+}
+
+function renderSizing(s: { entry: number; stop: number; grade?: Grade } | null) {
+  const pf = portfolioStats.balanced;
+  const riskPct = pf.riskPct;
+  const mult = s?.grade ? GRADE_SIZE[s.grade] : 1;
+  const riskAmt = (accountSize * riskPct * mult) / 100;
+  const dist = s ? Math.abs(s.entry - s.stop) : 0;
+  const qty = dist ? riskAmt / dist : 0;
+  const coin = ui.symbol.value.replace('USDT', '');
+  ui.simpleSizing.innerHTML = `
+    <h3>Position size</h3>
+    <label class="field">Account size (USDT) <input id="acct" type="number" min="100" step="100" value="${accountSize}" /></label>
+    ${
+      s
+        ? `<dl class="kv">
+            <dt>Risk on this trade</dt><dd>${money(riskAmt)} (${(riskPct * mult).toFixed(1)}%${s.grade ? `, grade ${s.grade} × ${mult}` : ''})</dd>
+            <dt>Position</dt><dd>${qty.toPrecision(4)} ${coin} ≈ ${money(qty * s.entry)}</dd>
+            <dt>Margin at 3x</dt><dd>${money((qty * s.entry) / 3)}</dd>
+          </dl>`
+        : '<p class="muted">Shows how much to buy when a signal is live.</p>'
+    }
+    <p class="note">Recommended: risk ${riskPct}% of the account per trade (${portfolioStats.conservative.riskPct}% for smaller swings), at most ${portfolioStats.maxPositions} open positions, exchange leverage 3x (the system averaged ${pf.avgLeverage}x, peak ${pf.peakLeverage}x). If the stop is hit you lose only the “risk” amount.</p>`;
+  $<HTMLInputElement>('acct').addEventListener('change', (e) => {
+    accountSize = Math.max(100, Number((e.target as HTMLInputElement).value) || accountSize);
+    try {
+      localStorage.setItem('signal-account', String(accountSize));
+    } catch {
+      /* ignore */
+    }
+    renderSizing(s);
+  });
+}
+
+let scanId = 0;
+let scannedInterval = '';
+async function renderScanner() {
+  const id = ++scanId;
+  const interval = ui.interval.value as Interval;
+  const rows = new Map<string, CoinStatus | 'loading' | 'error'>(Object.keys(ASSETS).map((s) => [s, 'loading']));
+  const draw = () => {
+    const order = { 'open-now': 0, 'close-now': 1, 'in-trade': 2, flat: 3 } as const;
+    const list = [...rows.entries()].sort(([, a], [, b]) => (typeof a === 'string' ? 9 : order[a.kind]) - (typeof b === 'string' ? 9 : order[b.kind]));
+    ui.scanner.innerHTML = `
+      <h3>All coins · ${interval}</h3>
+      <ul class="signal-list scan">${list
+        .map(([sym, st]) => {
+          const name = sym.replace('USDT', '');
+          let badge = '<span class="pill close">…</span>';
+          let detail = '';
+          if (st === 'error') badge = '<span class="pill close">n/a</span>';
+          else if (st !== 'loading') {
+            if (st.kind === 'open-now') [badge, detail] = [`<span class="pill ${st.side === 'long' ? 'buy' : 'sell'}">${st.side === 'long' ? 'LONG' : 'SHORT'} NOW</span>`, money(st.price)];
+            else if (st.kind === 'close-now') [badge, detail] = ['<span class="pill close">CLOSE NOW</span>', pctText(st.pct)];
+            else if (st.kind === 'in-trade') [badge, detail] = [`<span class="pill ${st.side === 'long' ? 'buy' : 'sell'} dim">IN ${st.side === 'long' ? 'LONG' : 'SHORT'}</span>`, pctText(st.pct)];
+            else badge = '<span class="pill close dim">NO TRADE</span>';
+          }
+          return `<li data-sym="${sym}" class="${sym === ui.symbol.value ? 'current' : ''}">${badge}<span>${name} <span class="muted">${ASSETS[sym]}</span></span><span>${detail}</span></li>`;
+        })
+        .join('')}</ul>
+      <p class="note">Tap a coin to open it. Status is from the last closed ${interval} candle.</p>`;
+    ui.scanner.querySelectorAll<HTMLLIElement>('li[data-sym]').forEach((li) =>
+      li.addEventListener('click', () => {
+        ui.symbol.value = li.dataset.sym!;
+        void run();
+      }),
+    );
+  };
+  draw();
+  let btc: Map<number, number> | null = null;
+  try {
+    btc = btcRegimeByTime((await loadCandles('BTCUSDT', interval, 1000)).slice(0, -1));
+  } catch {
+    /* scan without the BTC gate */
+  }
+  const queue = Object.keys(ASSETS);
+  await Promise.all(
+    Array.from({ length: 4 }, async () => {
+      for (let sym = queue.shift(); sym; sym = queue.shift()) {
+        try {
+          const c = (await loadCandles(sym, interval, 1000).catch(() => loadCandles(sym, interval, 1000))).slice(0, -1);
+          if (id !== scanId) return;
+          rows.set(sym, coinStatus(c, sym, btc, false));
+        } catch {
+          rows.set(sym, 'error');
+        }
+        if (id === scanId) draw();
+      }
+    }),
+  );
 }
 
 function renderFrontier(description: string, params: Record<string, number>) {
@@ -473,7 +624,7 @@ function renderLatest(candidates: Signal[], approved: Signal[], jevOn: boolean) 
     `<span>${label}</span><div class="meter"><span style="width:${Math.round(p * 100)}%"></span></div><span>${Math.round(p * 100)}%</span>`;
   ui.latest.innerHTML = `
     <h3>Latest signal</h3>
-    <div class="signal-side ${last.side}">${last.side === 'long' ? 'BUY / LONG' : 'SELL / SHORT'}</div>
+    <div class="signal-side ${last.side}">${last.side === 'long' ? 'LONG' : 'SHORT'}</div>
     <div class="muted">${new Date(last.time * 1000).toUTCString()} · ${barsAgo} bar${barsAgo === 1 ? '' : 's'} ago</div>
     <ul class="reasons">${last.reasons.map((r) => `<li>${r}</li>`).join('')}</ul>
     ${
@@ -503,11 +654,20 @@ async function run() {
   const symbol = ui.symbol.value;
   const interval = ui.interval.value as Interval;
   try {
-    const all = await loadCandles(symbol, interval);
+    const [all, btc] = await Promise.all([
+      loadCandles(symbol, interval),
+      symbol === 'BTCUSDT' ? Promise.resolve(null) : loadCandles('BTCUSDT', interval).catch(() => null),
+    ]);
     if (id !== runId) return;
     // Drop the still-forming bar so every signal is computed on closed candles.
     candles = all.slice(0, -1);
+    let btcCandles = btc ? btc.slice(0, -1) : candles;
+    btcRegime = btcRegimeByTime(btcCandles);
     await analyze(id);
+    if (mode === 'simple' && scannedInterval !== interval) {
+      scannedInterval = interval;
+      void renderScanner();
+    }
     const span = mode === 'simple' ? 120 : 200;
     chart.timeScale().setVisibleLogicalRange({ from: candles.length - span, to: candles.length + 5 });
     let forming: Candle | null = null;
@@ -516,7 +676,17 @@ async function run() {
       if (closed) {
         if (candles[candles.length - 1]?.time !== c.time) candles.push(c);
         forming = null;
-        void analyze(id);
+        const refresh = async () => {
+          // Keep Bitcoin's regime current for the altcoin gate.
+          if (symbol !== 'BTCUSDT') {
+            const latest = await loadCandles('BTCUSDT', interval, 5).catch(() => []);
+            for (const b of latest.slice(0, -1)) if (b.time > btcCandles[btcCandles.length - 1].time) btcCandles.push(b);
+          } else btcCandles = candles;
+          btcRegime = btcRegimeByTime(btcCandles);
+          await analyze(id);
+          if (mode === 'simple') void renderScanner();
+        };
+        void refresh();
       } else {
         forming = c;
         candleSeries.update({ ...forming, time: t(forming.time) });
@@ -540,6 +710,7 @@ function setMode(next: Mode, rerun = true) {
     /* ignore */
   }
   if (mode === 'simple') {
+    scannedInterval = '';
     // Simple mode always shows the best overall strategy with limit-order costs.
     ui.strategy.value = composite.id;
     ui.orderType.value = 'limit';
@@ -553,5 +724,6 @@ ui.run.addEventListener('click', run);
 ui.symbol.addEventListener('change', run);
 ui.strategy.addEventListener('change', run);
 ui.orderType.addEventListener('change', run);
+ui.allowShorts.addEventListener('change', run);
 ui.interval.addEventListener('change', run);
 void run();

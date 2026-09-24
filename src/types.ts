@@ -42,6 +42,9 @@ export interface RiskParams {
   slippagePct: number; // per side
   maintenanceMarginPct: number;
   fundingPct8h?: number; // perpetual funding paid per 8h, % of notional
+  partialR?: number; // take partial profit at N x initial risk (0/undefined = off)
+  partialFrac?: number; // fraction of the position closed at the partial target
+  breakevenAfterPartial?: boolean; // move the stop to entry once the partial is taken
   startEquity: number;
 }
 

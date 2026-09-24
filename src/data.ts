@@ -7,10 +7,28 @@ const WS = 'wss://data-stream.binance.vision/ws';
 export const INTERVALS = ['15m', '1h', '4h', '1d'] as const;
 export type Interval = (typeof INTERVALS)[number];
 
+// Top coins by market cap with Binance spot + perpetual markets (see research/universe.ts).
 export const ASSETS: Record<string, string> = {
   BTCUSDT: 'Bitcoin',
   ETHUSDT: 'Ethereum',
+  BNBUSDT: 'BNB',
+  XRPUSDT: 'XRP',
   SOLUSDT: 'Solana',
+  TRXUSDT: 'TRON',
+  ZECUSDT: 'Zcash',
+  DOGEUSDT: 'Dogecoin',
+  LINKUSDT: 'Chainlink',
+  ADAUSDT: 'Cardano',
+  XLMUSDT: 'Stellar',
+  BCHUSDT: 'Bitcoin Cash',
+  NEARUSDT: 'NEAR',
+  UNIUSDT: 'Uniswap',
+  LTCUSDT: 'Litecoin',
+  AVAXUSDT: 'Avalanche',
+  SUIUSDT: 'Sui',
+  HBARUSDT: 'Hedera',
+  DOTUSDT: 'Polkadot',
+  ETCUSDT: 'Ethereum Classic',
 };
 
 type RawKline = [number, string, string, string, string, string, ...unknown[]];

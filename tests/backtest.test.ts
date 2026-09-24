@@ -90,3 +90,22 @@ describe('exit rules', () => {
     expect(withFunding.pnl).toBeLessThan(0);
   });
 });
+
+describe('partial take-profit', () => {
+  it('banks half at 1R, moves the stop to breakeven, and exits the rest there', () => {
+    const c = flat(12);
+    c[4] = bar(4, 100, 102.5, 100, 102); // reaches +1R (stop 2 ATR = 2 -> 1R = 102)
+    c[6] = bar(6, 101, 101, 99, 99.5); // falls back through entry
+    const t = backtest(c, [sig(2, 'long')], atr1(12), {
+      ...noCosts,
+      takeProfitR: 0,
+      stopAtr: 2,
+      partialR: 1,
+      partialFrac: 0.5,
+      breakevenAfterPartial: true,
+    }).trades[0];
+    expect(t.exitReason).toBe('stop');
+    expect(t.exitPrice).toBe(100);
+    expect(t.rMultiple).toBeCloseTo(0.5); // half the position made 1R, the rest broke even
+  });
+});

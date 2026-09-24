@@ -1,33 +1,45 @@
 # Signal
 
-Buy/sell signals for Bitcoin (plus ETH and SOL), drawn on a TradingView
+Long/short signals for the top 20 crypto coins, drawn on a TradingView
 [lightweight-charts](https://github.com/tradingview/lightweight-charts) chart. Several walk-forward-tested strategies
 generate signals, and [Jev](https://typesafe.ai), TypeSafe AI's System One model, can veto them.
 
+**LONG** = a bet that the price rises; **SHORT** = a bet that it falls; **CLOSE** = exit the position.
+
 ## Simple and Advanced modes
 
-- **Simple** (default) shows only the best overall strategy, the **Signal Composite**: large BUY/SELL arrows on the
-  chart, entry and stop lines for the open trade, a status card (*IN A BUY*, *NO TRADE*, or *BUY NOW* / *SELL NOW*
-  when a decision was confirmed on the last close), the latest signals with prices and results, and its track record.
-- **Advanced** unlocks the strategy picker, Jev filter, leverage, risk, order type, backtest tables, walk-forward
-  panels and the market-context panel.
+- **Simple** (default) shows only the best overall strategy, the **Signal Composite**: large LONG/CLOSE arrows with
+  an A/B/C strength grade, entry and stop lines for the open trade, a status card (*IN A LONG*, *NO TRADE*, or
+  *OPEN LONG NOW* / *CLOSE LONG NOW* when a decision was confirmed on the last close), a position-size calculator,
+  an all-coins scanner, the latest signals, and the track record of the coin and of the whole 20-coin account.
+- **Advanced** unlocks the strategy picker, Jev filter, optional shorts, leverage, risk, order type, backtest
+  tables, walk-forward panels and the market-context panel.
 
 ## Signal Composite (best overall)
 
-Supertrend, RSI(2) pullback and band reversion vote at every candle. The composite buys when any of them wants a
-long and the trend regime isn't bearish, and sells when none do (3 ATR protective stop). Scored on history after
-each coin's first two years, limit-order fees and funding included:
+Supertrend, RSI(2) pullback and band reversion vote at every candle. The composite goes long when any of them
+wants a long and the coin's trend isn't bearish, and closes when none do (3 ATR protective stop). Altcoin longs also
+wait while **Bitcoin's** trend is bearish. Each long gets a **strength grade** (A = top 20% of historical model
+scores, size 1.5×; B = 1×; C = bottom 20%, 0.5×).
 
-| | BTC 4h | ETH 4h | SOL 4h | BTC 1h | ETH 1h | SOL 1h |
-|---|---|---|---|---|---|---|
-| Win rate | 60% | 58% | 63% | 60% | 56% | 59% |
-| Trades / year | 28 | 29 | 31 | 99 | 100 | 97 |
-| Profit factor | 1.27 | 2.09 | 2.52 | 1.43 | 1.52 | 1.46 |
+Scored on history after each coin's first two years, limit-order fees and **real historical funding** included.
+Designed on BTC/ETH/SOL; the other 17 coins are an out-of-sample test:
 
-Versus Supertrend alone it trades 3–4× more often with a much higher win rate (Supertrend wins ~35–40%) for similar
-total profit. The line-up was chosen after comparing fixed line-ups across coins, so treat these numbers as slightly
-optimistic. A fully blind walk-forward that re-picks the line-up every 6 months from all 63 combinations was still
-profitable on 1h for all three coins (PF 1.34–1.51; see [`research/RESULTS-composite-walkforward.md`](research/RESULTS-composite-walkforward.md)). `npm run composite` regenerates the numbers.
+- **4h: profitable on 19/20 coins** (win rate 46–63%, profit factor 0.79–4.09; only HBAR lost).
+- **1h: profitable on 18/20** (UNI and BCH roughly break-even).
+
+### Whole account (20 coins, 4h, `research/portfolio*.ts`)
+
+1% risk per trade, at most 5 open positions, altcoin longs paused while BTC is bearish:
+
+| | 2019* | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026* |
+|---|---|---|---|---|---|---|---|---|
+| 1% risk | −3% | +163% | +222% | −17% | +108% | +32% | +107% | +17% |
+| 0.5% risk | −1% | +67% | +93% | −8% | +50% | +19% | +55% | +9% |
+
+\*partial years. 1% risk: +72%/yr, max drawdown 31%, Sharpe 1.64, average leverage 0.33x (peak 1.9x). A block
+bootstrap stress test (5,000 five-year paths) puts the bad-case (95th percentile) drawdown at 39%. Most of the
+return came in bull years; the only losing full year was 2022. Leverage 3x on the exchange is plenty.
 
 ## Strategies
 
@@ -35,7 +47,7 @@ Pick one in Advanced mode. Every strategy computes signals on **closed bars only
 
 | Strategy | Idea | Character |
 |---|---|---|
-| Signal Composite (default) | The three strategies below voting together, gated by regime | Most signals at a ~56–63% win rate, profitable on every coin tested |
+| Signal Composite (default) | The three strategies below voting together, gated by regime | Most signals at a ~55–63% win rate, profitable on 19 of 20 coins (4h) |
 | Supertrend trend-follow | Supertrend flips up while price is above a rising EMA; ride it until the next flip | Wins ~1 in 3 trades, but the winners are large |
 | Trend pullback (RSI 2) | Uptrend on the chart and the daily; buy a 2-period-RSI washout; sell the first bounce | Wins ~2 in 3 trades, small profit per trade |
 | A+ stacked pullback | RSI(2) washout + close under the lower Bollinger band + stretched below the 20 EMA, uptrend on two timeframes | Rare trades |
@@ -111,6 +123,25 @@ Jev filter and compare the *Strategy* and *+ Jev* columns.
 
 Leverage multiplies losses as well as gains. Treat this as a research tool, not financial advice.
 
+## Research round 3: portfolio, exits, futures data, ML, overfitting
+
+Data: 20 coins (spot history from 2017–2023 depending on listing) plus Binance USDT-perpetual funding rates (from 2020)
+and open-interest / long-short metrics (from Dec 2021; `research/futures.ts`, from `data.binance.vision`).
+
+| Question | Answer | Details |
+|---|---|---|
+| Size by volatility? | Yes: risk-based sizing (ATR stop) beat equal notional, Sharpe 1.25 vs 1.18 | `RESULTS-portfolio.md` |
+| How much risk / leverage? | 1% risk, max 5 positions, BTC gate: 72%/yr, 31% max DD; 2% risk has a 71% chance of a 50% drawdown | `RESULTS-portfolio.md` |
+| Better exits? | No. Partial profits, trailing stops, time limits and fixed targets all cut profit; a 2 ATR stop adds return but proportionally more drawdown | `RESULTS-exits.md` |
+| Add shorts? | Thin edge (~+0.03R/trade on 4h); roughly neutral for the account. Optional toggle | `RESULTS-futures-shorts-ml.md` |
+| Futures positioning? | "Retail crowded long" predicts weaker longs (confirmed on 6 holdout coins), but doesn't move the portfolio. Funding / OI filters were noise | `RESULTS-futures-shorts-ml.md` |
+| ML scoring? | Predicting wins picks the low-profit trades (win rate ≠ profit). Predicting profit works: top quintile +0.40R vs ~+0.05R. Shipped as A/B/C grades | `RESULTS-futures-shorts-ml.md` |
+| Overfit? | Every setting nudge stays profitable (PF 1.39–1.71); PBO 30%; 176/189 line-ups profitable; deflated Sharpe says the *exact* pick isn't special, the approach is | `RESULTS-overfitting.md` |
+| Jev? | `npm run jev-eval` with `TYPESAFE_API_KEY` set compares the composite with and without Jev | `research/jev-eval.ts` |
+
+Remaining caveats: prices are spot (not perp) candles; limit orders are assumed to fill; the universe is today's top
+coins (survivorship bias); results lean on the 2020–21 and 2023–25 bull markets.
+
 ## Run it
 
 ```bash
@@ -141,10 +172,14 @@ Market data comes from Binance's public mirror (`data-api.binance.vision`), with
 ```bash
 npm test          # indicators, strategies (no repainting), backtester, Jev client, proxy
 npm run research  # strategy walk-forward (caches history in research/.cache)
+npx tsx research/portfolio.ts        # multi-coin account + stress test
+npx tsx research/exits.ts            # exit variants, walk-forward
+npx tsx research/overfit.ts          # sensitivity, PBO, deflated Sharpe
+npm run jev-eval                     # Jev comparison (needs TYPESAFE_API_KEY)
 npm run mine      # quant condition mining frontier
 npm run typecheck
 ```
 
 ## Adding assets
 
-Add a Binance symbol to `ASSETS` in `src/data.ts`.
+Add a Binance symbol to `ASSETS` in `src/data.ts` (and to `research/universe.ts` to include it in research).

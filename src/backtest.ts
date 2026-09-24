@@ -19,6 +19,11 @@ export interface ExitRules {
   exitShort?: boolean[];
   /** Close after this many bars in the trade (0 = off). */
   maxBars?: number;
+  /**
+   * Actual perpetual funding per bar (sum of funding rates settled during the bar, as a fraction; NaN = unknown).
+   * Longs pay positive funding and shorts receive it. Unknown bars fall back to `fundingPct8h`, always paid.
+   */
+  funding?: Float64Array;
 }
 
 interface Position {
@@ -34,6 +39,9 @@ interface Position {
   extreme: number; // best price since entry, for the trailing stop
   entryFee: number;
   funding: number;
+  origQty: number;
+  realized: number; // P&L already banked by a partial take-profit
+  partialDone: boolean;
 }
 
 export interface BacktestResult {
@@ -78,11 +86,11 @@ export function backtest(
     let exitPrice: number;
     if (reason === 'liquidation') {
       exitPrice = pos.liq;
-      pnl = -(pos.qty * pos.entryPrice) / r.leverage - pos.entryFee - pos.funding;
+      pnl = -(pos.qty * pos.entryPrice) / r.leverage - pos.entryFee - pos.funding + pos.realized;
     } else {
       exitPrice = rawPrice * (1 - dir * slip);
       const exitFee = pos.qty * exitPrice * feeRate;
-      pnl = dir * (exitPrice - pos.entryPrice) * pos.qty - pos.entryFee - exitFee - pos.funding;
+      pnl = dir * (exitPrice - pos.entryPrice) * pos.qty - pos.entryFee - exitFee - pos.funding + pos.realized;
     }
     equity += pnl;
     trades.push({
@@ -94,9 +102,9 @@ export function backtest(
       exitTime: candles[i].time,
       exitPrice,
       exitReason: reason,
-      qty: pos.qty,
+      qty: pos.origQty,
       pnl,
-      rMultiple: pnl / (pos.riskPerUnit * pos.qty),
+      rMultiple: pnl / (pos.riskPerUnit * pos.origQty),
     });
     pos = null;
   };
@@ -132,13 +140,20 @@ export function backtest(
           extreme: entry,
           entryFee: qty * entry * feeRate,
           funding: 0,
+          origQty: qty,
+          realized: 0,
+          partialDone: false,
         };
       }
     }
 
     // 2) Manage an open position against this bar's range.
     if (pos) {
-      pos.funding += pos.qty * bar.open * fundingPerBar;
+      const f = rules.funding?.[i];
+      pos.funding +=
+        f === undefined || Number.isNaN(f)
+          ? pos.qty * bar.open * fundingPerBar
+          : (pos.side === 'long' ? 1 : -1) * pos.qty * bar.open * f;
       const long = pos.side === 'long';
       const activeStop = long ? Math.max(pos.stop, pos.trail) : Math.min(pos.stop, pos.trail);
       const stopIsTrail = activeStop !== pos.stop;
@@ -150,6 +165,21 @@ export function backtest(
         // Gap through the stop fills at the open.
         const fill = long ? Math.min(activeStop, bar.open) : Math.max(activeStop, bar.open);
         close(i, fill, stopIsTrail ? 'trail' : 'stop');
+      } else if (
+        r.partialR &&
+        !pos.partialDone &&
+        (long ? bar.high >= pos.entryPrice + pos.riskPerUnit * r.partialR : bar.low <= pos.entryPrice - pos.riskPerUnit * r.partialR) &&
+        (Number.isNaN(pos.target) || r.partialR < (long ? pos.target - pos.entryPrice : pos.entryPrice - pos.target) / pos.riskPerUnit)
+      ) {
+        // Bank part of the position; the rest keeps running.
+        const px = pos.entryPrice + (long ? 1 : -1) * pos.riskPerUnit * r.partialR;
+        const fill = long ? Math.max(px, bar.open) : Math.min(px, bar.open);
+        const q = pos.qty * (r.partialFrac ?? 0.5);
+        const exitPx = fill * (1 - (long ? 1 : -1) * slip);
+        pos.realized += (long ? 1 : -1) * (exitPx - pos.entryPrice) * q - q * exitPx * feeRate;
+        pos.qty -= q;
+        pos.partialDone = true;
+        if (r.breakevenAfterPartial) pos.stop = long ? Math.max(pos.stop, pos.entryPrice) : Math.min(pos.stop, pos.entryPrice);
       } else if (!Number.isNaN(pos.target) && (long ? bar.high >= pos.target : bar.low <= pos.target)) {
         const fill = long ? Math.max(pos.target, bar.open) : Math.min(pos.target, bar.open);
         close(i, fill, 'target');
