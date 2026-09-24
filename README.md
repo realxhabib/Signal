@@ -16,6 +16,11 @@ Pick one in the app. Every strategy computes signals on **closed bars only**; te
 | Trend band reversion | Uptrend + close below the lower Bollinger band; exit at the mid band | |
 | Trend pullback, fixed target | Uptrend + RSI(14) dip; take profit at a fraction of the stop | |
 | Jurik MA confluence | Jurik MA crossover scored against trend, ADX, RSI, MACD and volume | The original strategy |
+| Quant mined rules | Combinations of ~80 quant, regime, calendar and moon conditions mined for high win rates | ~62–68% real win rate at 2:1 stop:target; roughly break-even |
+
+The **Market context** panel shows the latest bar's trend regime (chart timeframe and daily), moon phase, and quant
+state: volatility and Bollinger-width percentiles, variance ratio (trending vs mean-reverting), efficiency ratio,
+return skew and autocorrelation, z-score, momentum rank, drawdown and volume z-score.
 
 **Jev as judge.** When the Jev filter is on, each signal's market context is sent to Jev as pre-computed features:
 percent distances, RSI/ADX, volatility and recent returns. There are **no dates and no absolute prices**, so Jev can't
@@ -47,6 +52,33 @@ Findings (unseen data, costs included):
   factor 1.45–2.5, avg +0.26 to +0.64R per trade, but only 32–36% of trades win.
 - A strategy that wins 80% with a stop 3–4× larger than its target is not "accurate" in any useful sense. One loss
   erases several wins, and leverage turns that into liquidation risk.
+
+### Condition mining: most signals at the best win rate
+
+`npm run mine` labels every bar with a triple-barrier outcome (stop, target and time limit, with costs) for a long and a
+short. It then searches single conditions, pairs and triples across ~80 features (regime, daily trend, Supertrend,
+RSI, z-score, momentum, drawdown, volatility regime, Bollinger width, variance ratio, efficiency ratio, skew,
+autocorrelation, volume, candle shape, weekday, session, moon phase). For each target win rate, rules are picked on
+past data only and traded on the next unseen 6 months. Full tables: [`research/QUANT.md`](research/QUANT.md).
+
+Pooled across BTC, ETH and SOL, limit-order costs, 2 ATR stop / 1 ATR target (break-even ≈ 67% before costs):
+
+| TF | Train win-rate bar | Signals / year | **Real (unseen) win rate** | PF |
+|---|---|---|---|---|
+| 4h | ≥70% | 185 | 64.4% | 1.05 |
+| 4h | ≥80% | 56 | 62.2% | 0.99 |
+| 1h | ≥75% | 284 | 67.6% | 1.02 |
+| 1h | ≥85% | 15 | 69.4% | 1.09 |
+
+- **The frontier is flat.** Raising the training bar from 65% to 85% cuts signals by 10–50× but barely moves the
+  real win rate. Rules that won 80–85% in training won 61–69% afterwards. That gap is what data-mining overfitting
+  looks like.
+- **Moon phase:** mined rules often included moon conditions in training, and they didn't hold up. On their own, over
+  daily data, the "up next day" rate by phase ranges 39–56% against a ~50% baseline, which is within noise for ~415
+  days per phase (new moon was weakest on all three coins; the coins move together, so that's not three independent
+  confirmations).
+- **Bullish/bearish regime is the real effect:** average next-day return is +0.26–0.69% in a bull regime versus
+  ~0% in a bear regime, on all three coins. That's why trend-following (Supertrend) is the strategy that holds up.
 
 Whether Jev can lift the win rate is the one untested lever, because it needs an API key. With a key set, toggle the
 Jev filter and compare the *Strategy* and *+ Jev* columns.
@@ -82,7 +114,8 @@ Market data comes from Binance's public mirror (`data-api.binance.vision`), with
 
 ```bash
 npm test          # indicators, strategies (no repainting), backtester, Jev client, proxy
-npm run research  # walk-forward study (caches history in research/.cache)
+npm run research  # strategy walk-forward (caches history in research/.cache)
+npm run mine      # quant condition mining frontier
 npm run typecheck
 ```
 

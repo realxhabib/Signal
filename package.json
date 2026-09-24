@@ -8,7 +8,8 @@
     "start": "node --env-file-if-exists=.env server/serve.ts",
     "test": "vitest run",
     "typecheck": "tsc",
-    "research": "TARGET_WIN=0 FEE=0.05 SLIP=0.02 OUT=RESULTS-market.md tsx research/walkforward.ts && TARGET_WIN=0 FEE=0.02 SLIP=0 OUT=RESULTS-limit.md tsx research/walkforward.ts"
+    "research": "TARGET_WIN=0 FEE=0.05 SLIP=0.02 OUT=RESULTS-market.md tsx research/walkforward.ts && TARGET_WIN=0 FEE=0.02 SLIP=0 OUT=RESULTS-limit.md tsx research/walkforward.ts",
+    "mine": "tsx research/mine.ts"
   },
   "repository": {
     "type": "git",

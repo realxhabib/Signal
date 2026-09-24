@@ -46,3 +46,32 @@ describe('higherTimeframe', () => {
     expect(out[47]).toBe(1);
   });
 });
+
+import { computeFeatures, moonPhase } from '../src/features';
+
+describe('features', () => {
+  it('computes moon phases for known dates', () => {
+    expect(moonPhase(Date.UTC(2024, 3, 8, 18) / 1000)).toBe('new'); // eclipse new moon 8 Apr 2024
+    expect(moonPhase(Date.UTC(2024, 8, 18, 3) / 1000)).toBe('full'); // full moon 18 Sep 2024
+    expect(moonPhase(Date.UTC(2025, 0, 6, 23) / 1000)).toBe('first-quarter'); // 6 Jan 2025
+  });
+
+  it('features never use future bars', () => {
+    const c = series(1400);
+    const full = computeFeatures(c).conditions;
+    const cut = computeFeatures(c.slice(0, 1000)).conditions;
+    for (const [name, arr] of cut) expect(Array.from(arr), name).toEqual(Array.from(full.get(name)!.slice(0, 1000)));
+  });
+});
+
+import { quantStrategy } from '../src/quant';
+
+describe('quant mined rules', () => {
+  it('never repaints', () => {
+    const c = series(1500, 14_400);
+    const ctx = { symbol: 'BTCUSDT', interval: '4h' };
+    const full = quantStrategy.build(c, quantStrategy.defaults, ctx).signals.filter((s) => s.index < 1100);
+    const prefix = quantStrategy.build(c.slice(0, 1100), quantStrategy.defaults, ctx).signals;
+    expect(prefix.map((s) => [s.index, s.side])).toEqual(full.map((s) => [s.index, s.side]));
+  });
+});

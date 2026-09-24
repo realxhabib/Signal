@@ -30,8 +30,10 @@
       <aside class="panel">
         <div class="card" id="latest"></div>
         <div class="card" id="walkforward"></div>
+        <div class="card" id="context"></div>
         <div class="card">
-          <h3>Backtest (bars loaded in app)</h3>
+          <h3 id="statsTitle">Backtest (bars loaded in app)</h3>
+          <p id="statsWarn" class="note short" hidden></p>
           <table id="stats"></table>
           <p class="note">Fills at next bar open, with fees, slippage, ATR stops and isolated-margin liquidation. Past performance does not predict future results.</p>
         </div>

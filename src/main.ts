@@ -13,11 +13,13 @@ import './styles.css';
 import { backtest, defaultRisk, summarize, type Stats } from './backtest';
 import { ASSETS, INTERVALS, loadCandles, streamCandles, type Interval } from './data';
 import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from './jev';
-import { STRATEGIES, type StrategyOutput } from './strategies';
+import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './quant';
+import { STRATEGIES as BASE_STRATEGIES, type StrategyOutput } from './strategies';
 import { computeIndicators, defaultStrategy } from './strategy';
 import type { Candle, RiskParams, Signal, Trade } from './types';
 import walkforward from './walkforward.json';
 
+const STRATEGIES = [...BASE_STRATEGIES, quantStrategy];
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ui = {
   symbol: $<HTMLSelectElement>('symbol'),
@@ -28,6 +30,7 @@ const ui = {
   strategy: $<HTMLSelectElement>('strategy'),
   orderType: $<HTMLSelectElement>('orderType'),
   walkforward: $<HTMLDivElement>('walkforward'),
+  context: $<HTMLDivElement>('context'),
   run: $<HTMLButtonElement>('run'),
   status: $<HTMLSpanElement>('status'),
   latest: $<HTMLDivElement>('latest'),
@@ -93,7 +96,7 @@ function riskParams(): RiskParams {
 /** Full pipeline: strategy signals -> Jev verdicts -> backtest -> render. */
 async function analyze(id: number) {
   const strategy = STRATEGIES.find((s) => s.id === ui.strategy.value) ?? STRATEGIES[0];
-  const out = strategy.build(candles, strategy.defaults);
+  const out = strategy.build(candles, strategy.defaults, { symbol: ui.symbol.value, interval: ui.interval.value });
   const candidates = out.signals;
   const risk = { ...riskParams(), ...out.risk };
 
@@ -134,7 +137,13 @@ async function analyze(id: number) {
     ...(jevOn ? ([['+ Jev', summarize(filtered, risk.startEquity)]] as [string, Stats][]) : []),
     [`Recent 30%${jevOn ? ' +Jev' : ''}`, summarize(recent, risk.startEquity)],
   ]);
-  renderWalkForward(strategy.id, strategy.description);
+  const inSample = strategy.id === quantStrategy.id;
+  $('statsWarn').hidden = !inSample;
+  $('statsWarn').textContent = inSample
+    ? 'In-sample: these rules were mined on this same history, so this table overstates them. Use the frontier above (unseen data) as the real expectation.'
+    : '';
+  renderWalkForward(strategy.id, strategy.description, strategy.defaults);
+  renderContext();
   renderTrades(filtered.trades);
   renderLatest(candidates, approved, jevOn);
   setStatus(
@@ -145,7 +154,28 @@ async function analyze(id: number) {
   );
 }
 
-function renderWalkForward(strategyId: string, description: string) {
+function renderContext() {
+  const ctx = marketContext(candles);
+  const cls = (r: string | null) => (r === 'bullish' ? 'long' : r === 'bearish' ? 'short' : 'muted');
+  const groups = new Map<string, string[]>();
+  for (const k of ctx.active) {
+    const [fam, val] = k.split(':');
+    if (['regime', 'daily', 'moon', 'day', 'session'].includes(fam)) continue;
+    groups.set(fam, [...(groups.get(fam) ?? []), val]);
+  }
+  ui.context.innerHTML = `
+    <h3>Market context (last closed bar)</h3>
+    <table>
+      <tr><td>Trend regime (${ui.interval.value})</td><td class="${cls(ctx.regime)}">${ctx.regime}</td></tr>
+      ${ctx.dailyRegime ? `<tr><td>Trend regime (daily)</td><td class="${cls(ctx.dailyRegime)}">${ctx.dailyRegime}</td></tr>` : ''}
+      <tr><td>Moon</td><td>${ctx.moon.replace('-', ' ')} · ${Math.round(ctx.moonIllumination * 100)}% lit · full in ${ctx.daysToFull.toFixed(1)}d</td></tr>
+      ${[...groups.entries()].map(([k, v]) => `<tr><td>${k}</td><td>${v.join(', ')}</td></tr>`).join('')}
+    </table>
+    <p class="note">Regime = price vs EMA 50/200 with the 200 rising or falling. Variance ratio &gt; 1 means moves persist (trending), &lt; 1 means they revert. Moon phase showed no reliable edge in testing (see research/QUANT.md).</p>`;
+}
+
+function renderWalkForward(strategyId: string, description: string, params: Record<string, number>) {
+  if (strategyId === quantStrategy.id) return renderFrontier(description, params);
   const book = walkforward[ui.orderType.value as 'limit' | 'market'] as Record<
     string,
     { trades: number; winRate: number; profitFactor: number; avgR: number }
@@ -211,6 +241,29 @@ function render(out: StrategyOutput, candidates: Signal[], approved: Signal[], t
     });
   }
   markers.setMarkers(m.sort((a, b) => (a.time as number) - (b.time as number)));
+}
+
+function renderFrontier(description: string, params: Record<string, number>) {
+  const profile = QUANT_PROFILES[params.profile] ?? 'high-hit';
+  const set = quantRuleSet(profile, ui.symbol.value, ui.interval.value);
+  if (!set) {
+    ui.walkforward.innerHTML = '<h3>Signal frontier</h3><p class="muted">No mined rules for this timeframe.</p>';
+    return;
+  }
+  const rows = Object.entries(set.oos)
+    .map(
+      ([t, r]) =>
+        `<tr${+t === params.target ? ' style="font-weight:600"' : ''}><td>≥${Math.round(+t * 100)}%</td><td>${r.perYear.toFixed(0)}</td><td>${
+          r.trades ? (r.winRate * 100).toFixed(1) + '%' : '–'
+        }</td><td class="${r.profitFactor >= 1.2 ? 'long' : r.trades && r.profitFactor < 1 ? 'short' : ''}">${r.trades ? r.profitFactor.toFixed(2) : '–'}</td></tr>`,
+    )
+    .join('');
+  const breakEven = Math.round((set.profile.sl / (set.profile.sl + set.profile.tp)) * 100);
+  ui.walkforward.innerHTML = `
+    <h3>Signal frontier (unseen data)</h3>
+    <p class="muted" style="margin:0 0 8px">${description}</p>
+    <table><tr><th>Train win rate</th><th>Signals / yr</th><th>Real win rate</th><th>PF</th></tr>${rows}</table>
+    <p class="note">Rules picked on past data at each training win-rate bar, then traded on the next unseen 6 months (limit-order costs, funding). With a ${set.profile.sl} ATR stop and ${set.profile.tp} ATR target you need ~${breakEven}% wins to break even. Bold row = the rules shown on the chart.</p>`;
 }
 
 const fmt = (v: number, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : '∞');

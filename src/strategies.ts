@@ -19,7 +19,7 @@ export interface StrategyDef {
   description: string;
   defaults: Params;
   grid: Record<string, number[]>;
-  build(candles: Candle[], p: Params): StrategyOutput;
+  build(candles: Candle[], p: Params, ctx?: { symbol: string; interval: string }): StrategyOutput;
 }
 
 const cols = (c: Candle[]) => ({
