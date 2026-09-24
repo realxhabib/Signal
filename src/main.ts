@@ -4,13 +4,15 @@ import {
   createChart,
   createSeriesMarkers,
   LineSeries,
+  type IPriceLine,
   type ISeriesApi,
   type SeriesMarker,
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
 import './styles.css';
-import { backtest, defaultRisk, summarize, type Stats } from './backtest';
+import { backtest, defaultRisk, summarize, type BacktestResult, type Stats } from './backtest';
+import { composite } from './composite';
 import { ASSETS, INTERVALS, loadCandles, streamCandles, type Interval } from './data';
 import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from './jev';
 import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './quant';
@@ -19,7 +21,7 @@ import { computeIndicators, defaultStrategy } from './strategy';
 import type { Candle, RiskParams, Signal, Trade } from './types';
 import walkforward from './walkforward.json';
 
-const STRATEGIES = [...BASE_STRATEGIES, quantStrategy];
+const STRATEGIES = [composite, ...BASE_STRATEGIES, quantStrategy];
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ui = {
   symbol: $<HTMLSelectElement>('symbol'),
@@ -36,10 +38,21 @@ const ui = {
   latest: $<HTMLDivElement>('latest'),
   stats: $<HTMLTableElement>('stats'),
   trades: $<HTMLTableElement>('trades'),
+  simpleStatus: $<HTMLDivElement>('simpleStatus'),
+  simpleSignals: $<HTMLDivElement>('simpleSignals'),
+  simpleRecord: $<HTMLDivElement>('simpleRecord'),
 };
 
+type Mode = 'simple' | 'advanced';
+let mode: Mode = 'simple';
+try {
+  if (localStorage.getItem('signal-mode') === 'advanced') mode = 'advanced';
+} catch {
+  /* storage unavailable: default to simple */
+}
+
 for (const s of STRATEGIES) ui.strategy.add(new Option(s.name, s.id));
-ui.strategy.value = 'supertrend';
+ui.strategy.value = composite.id;
 for (const [sym, name] of Object.entries(ASSETS)) ui.symbol.add(new Option(`${name} (${sym})`, sym));
 for (const iv of INTERVALS) ui.interval.add(new Option(iv, iv));
 ui.interval.value = '4h';
@@ -63,6 +76,7 @@ const candleSeries = chart.addSeries(CandlestickSeries, {
 });
 let lineSeries: ISeriesApi<'Line'>[] = [];
 const markers = createSeriesMarkers(candleSeries, []);
+let priceLines: IPriceLine[] = [];
 
 const equityChart = createChart($('equity'), { ...chartOptions, timeScale: { ...chartOptions.timeScale, visible: false } });
 const equitySeries = equityChart.addSeries(LineSeries, { color: COLORS.fast, lineWidth: 2, priceLineVisible: false });
@@ -81,6 +95,13 @@ function setStatus(msg: string, error = false) {
   ui.status.textContent = msg;
   ui.status.classList.toggle('error', error);
 }
+
+const money = (v: number) =>
+  '$' + v.toLocaleString('en-US', { maximumFractionDigits: v >= 1000 ? 0 : v >= 10 ? 2 : 4, minimumFractionDigits: v >= 1000 ? 0 : 2 });
+const pctText = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+const tradePct = (tr: Trade) => ((tr.side === 'long' ? 1 : -1) * (tr.exitPrice - tr.entryPrice)) / tr.entryPrice * 100;
+const dateText = (s: number) =>
+  new Date(s * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }) + ' UTC';
 
 function riskParams(): RiskParams {
   const limit = ui.orderType.value === 'limit';
@@ -131,7 +152,8 @@ async function analyze(id: number) {
   const split = Math.floor(candles.length * 0.7);
   const recent = backtest(candles, approved.filter((s) => s.index >= split), out.atr, risk, out.rules);
 
-  render(out, candidates, approved, filtered.trades, filtered.equity);
+  render(out, candidates, approved, filtered.trades, filtered.equity, risk, filtered.pending);
+  renderSimple(strategy.id, filtered.trades, out, risk, jevOn, filtered.pending);
   renderStats([
     ['Strategy', summarize(base, risk.startEquity)],
     ...(jevOn ? ([['+ Jev', summarize(filtered, risk.startEquity)]] as [string, Stats][]) : []),
@@ -146,12 +168,14 @@ async function analyze(id: number) {
   renderContext();
   renderTrades(filtered.trades);
   renderLatest(candidates, approved, jevOn);
-  setStatus(
-    jevError
-      ? `Jev unavailable (${jevError}); showing strategy signals without Jev`
-      : `${candles.length} bars · ${candidates.length} candidates · ${approved.length} signals`,
-    !!jevError,
-  );
+  if (mode === 'simple') setStatus(`Live · updates when each candle closes${jevError ? ' · Jev not connected' : jevOn ? ' · Jev on' : ''}`);
+  else
+    setStatus(
+      jevError
+        ? `Jev unavailable (${jevError}); showing strategy signals without Jev`
+        : `${candles.length} bars · ${candidates.length} candidates · ${approved.length} signals`,
+      !!jevError,
+    );
 }
 
 function renderContext() {
@@ -195,52 +219,191 @@ function renderWalkForward(strategyId: string, description: string, params: Reco
     <h3>Walk-forward (unseen data)</h3>
     <p class="muted" style="margin:0 0 8px">${description}</p>
     ${body}
-    <p class="note">Settings tuned on 2 years, tested on the next 6 months, rolled forward since ${
-      ui.symbol.value === 'SOLUSDT' ? '2020' : '2017'
-    }. Only the test periods are counted. ${ui.orderType.value === 'limit' ? 'Limit-order' : 'Market-order'} costs and funding included.</p>`;
+    <p class="note">${
+      strategyId === composite.id
+        ? 'Fixed settings, scored on all history after each coin’s first two years. The line-up was chosen after comparing results across coins, so treat it as slightly optimistic; the fully blind walk-forward (re-picking the line-up every 6 months) was still profitable on 1h for all three coins.'
+        : `Settings tuned on 2 years, tested on the next 6 months, rolled forward since ${ui.symbol.value === 'SOLUSDT' ? '2020' : '2017'}. Only the test periods are counted.`
+    } ${ui.orderType.value === 'limit' ? 'Limit-order' : 'Market-order'} costs and funding included.</p>`;
 }
 
-function render(out: StrategyOutput, candidates: Signal[], approved: Signal[], trades: Trade[], equity: { time: number; value: number }[]) {
+function render(
+  out: StrategyOutput,
+  candidates: Signal[],
+  approved: Signal[],
+  trades: Trade[],
+  equity: { time: number; value: number }[],
+  risk: RiskParams,
+  pending: BacktestResult['pending'],
+) {
+  const simple = mode === 'simple';
   candleSeries.setData(candles.map((c) => ({ ...c, time: t(c.time) })));
   for (const s of lineSeries) chart.removeSeries(s);
-  lineSeries = out.lines.map((l) => {
-    const s = chart.addSeries(LineSeries, { color: l.color, lineWidth: 2, title: l.name, priceLineVisible: false, lastValueVisible: false });
+  lineSeries = (simple ? out.lines.slice(0, 1) : out.lines).map((l) => {
+    const s = chart.addSeries(LineSeries, {
+      color: l.color,
+      lineWidth: simple ? 1 : 2,
+      title: simple ? '' : l.name,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
     s.setData(toLine(l.values));
     return s;
   });
   equitySeries.setData(equity.map((p) => ({ time: t(p.time), value: p.value })));
 
-  const ok = new Set(approved.map((s) => s.index));
+  // Clear entry and exit points for every trade.
+  const size = simple ? 2 : 1;
   const m: SeriesMarker<Time>[] = [];
-  for (const s of candidates) {
-    const long = s.side === 'long';
-    const v = verdicts.get(s.index);
-    if (ok.has(s.index)) {
-      const prob = v ? ` ${Math.round((v.directionProbs[s.side] ?? 0) * 100)}%` : '';
-      m.push({
-        time: t(s.time),
-        position: long ? 'belowBar' : 'aboveBar',
-        shape: long ? 'arrowUp' : 'arrowDown',
-        color: long ? COLORS.long : COLORS.short,
-        text: `${long ? 'BUY' : 'SELL'}${prob}`,
-      });
-    } else {
-      m.push({ time: t(s.time), position: long ? 'belowBar' : 'aboveBar', shape: 'circle', color: COLORS.veto, text: 'veto', size: 0.5 });
-    }
-  }
   for (const tr of trades) {
-    if (tr.exitReason === 'reverse' || tr.exitReason === 'end') continue;
-    const label = tr.exitReason === 'liquidation' ? 'LIQ' : `${tr.rMultiple >= 0 ? '+' : ''}${tr.rMultiple.toFixed(1)}R`;
+    const long = tr.side === 'long';
     m.push({
-      time: t(tr.exitTime),
-      position: tr.side === 'long' ? 'aboveBar' : 'belowBar',
-      shape: 'square',
-      color: tr.pnl > 0 ? COLORS.long : COLORS.short,
-      text: label,
-      size: 0.5,
+      time: t(candles[tr.entryIndex].time),
+      position: long ? 'belowBar' : 'aboveBar',
+      shape: long ? 'arrowUp' : 'arrowDown',
+      color: long ? COLORS.long : COLORS.short,
+      text: simple ? (long ? 'BUY' : 'SHORT') : `${long ? 'BUY' : 'SHORT'} ${money(tr.entryPrice)}`,
+      size,
+    });
+    if (tr.exitReason === 'end') continue; // still open
+    const pct = tradePct(tr);
+    const why = tr.exitReason === 'liquidation' ? ' LIQ' : tr.exitReason === 'stop' ? ' stop' : '';
+    m.push({
+      time: t(candles[tr.exitIndex].time),
+      position: long ? 'aboveBar' : 'belowBar',
+      shape: long ? 'arrowDown' : 'arrowUp',
+      color: pct >= 0 ? '#f5a623' : COLORS.short,
+      text: simple ? `${long ? 'SELL' : 'COVER'} ${pctText(pct)}` : `${long ? 'SELL' : 'COVER'} ${money(tr.exitPrice)} ${pctText(pct)}${why}`,
+      size,
     });
   }
+  // Decisions made on the latest close fill at the next open: show them now.
+  const lastTime = t(candles[candles.length - 1].time);
+  const open0 = openTrade(trades);
+  if (open0 && (pending.exit || (pending.signal && pending.signal.side !== open0.side))) {
+    const long = open0.side === 'long';
+    m.push({ time: lastTime, position: long ? 'aboveBar' : 'belowBar', shape: long ? 'arrowDown' : 'arrowUp', color: '#f5a623', text: `${long ? 'SELL' : 'COVER'} at next open`, size });
+  }
+  if (pending.signal && (!open0 || pending.signal.side !== open0.side)) {
+    const long = pending.signal.side === 'long';
+    m.push({ time: lastTime, position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown', color: long ? COLORS.long : COLORS.short, text: `${long ? 'BUY' : 'SHORT'} at next open`, size });
+  }
+  if (!simple) {
+    // Signals the Jev filter vetoed.
+    const ok = new Set(approved.map((s) => s.index));
+    for (const s of candidates)
+      if (!ok.has(s.index))
+        m.push({ time: t(s.time), position: s.side === 'long' ? 'belowBar' : 'aboveBar', shape: 'circle', color: COLORS.veto, text: 'veto', size: 0.5 });
+  }
   markers.setMarkers(m.sort((a, b) => (a.time as number) - (b.time as number)));
+
+  // Entry and stop lines for the position that is open right now.
+  for (const pl of priceLines) candleSeries.removePriceLine(pl);
+  priceLines = [];
+  const open = openTrade(trades);
+  if (open) {
+    const stop = stopPrice(open, out, risk);
+    priceLines.push(
+      candleSeries.createPriceLine({ price: open.entryPrice, color: COLORS.fast, lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' }),
+      candleSeries.createPriceLine({ price: stop, color: COLORS.short, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'Stop' }),
+    );
+  }
+}
+
+const openTrade = (trades: Trade[]) => {
+  const last = trades[trades.length - 1];
+  return last && last.exitReason === 'end' ? last : null;
+};
+
+function stopPrice(tr: Trade, out: StrategyOutput, risk: RiskParams) {
+  const a = out.atr[tr.entryIndex - 1];
+  return tr.entryPrice - (tr.side === 'long' ? 1 : -1) * risk.stopAtr * a;
+}
+
+function renderSimple(
+  strategyId: string,
+  trades: Trade[],
+  out: StrategyOutput,
+  risk: RiskParams,
+  jevOn: boolean,
+  pending: BacktestResult['pending'],
+) {
+  const open = openTrade(trades);
+  const price = candles[candles.length - 1].close;
+  const asset = ASSETS[ui.symbol.value];
+  const closingNow = open && (pending.exit || (pending.signal && pending.signal.side !== open.side));
+  const openingNow = pending.signal && (!open || pending.signal.side !== open.side) ? pending.signal : null;
+  if (openingNow || closingNow) {
+    const buy = openingNow ? openingNow.side === 'long' : open!.side === 'short';
+    const word = openingNow ? (openingNow.side === 'long' ? 'BUY NOW' : 'SHORT NOW') : open!.side === 'long' ? 'SELL NOW' : 'COVER NOW';
+    ui.simpleStatus.innerHTML = `
+      <h3>${asset} · ${ui.interval.value}</h3>
+      <div class="big-status ${buy ? 'long' : 'short'}">${word}<small>Confirmed at the ${dateText(candles[candles.length - 1].time + (candles[1].time - candles[0].time))} close · act at the next open</small></div>
+      <dl class="kv">
+        <dt>Last close</dt><dd>${money(price)}</dd>
+        ${openingNow ? `<dt>Planned stop</dt><dd class="short">${money(price - (openingNow.side === 'long' ? 1 : -1) * risk.stopAtr * out.atr[candles.length - 1])}</dd>` : ''}
+        ${closingNow && open ? `<dt>Trade result</dt><dd class="${(open.side === 'long' ? price - open.entryPrice : open.entryPrice - price) >= 0 ? 'long' : 'short'}">${pctText((((open.side === 'long' ? 1 : -1) * (price - open.entryPrice)) / open.entryPrice) * 100)} so far</dd>` : ''}
+      </dl>
+      ${openingNow ? `<ul class="reasons">${openingNow.reasons.map((r) => `<li>${r}</li>`).join('')}</ul>` : ''}`;
+  } else if (open) {
+    const long = open.side === 'long';
+    const stop = stopPrice(open, out, risk);
+    const pnl = (((long ? 1 : -1) * (price - open.entryPrice)) / open.entryPrice) * 100;
+    ui.simpleStatus.innerHTML = `
+      <h3>${asset} · ${ui.interval.value}</h3>
+      <div class="big-status ${long ? 'long' : 'short'}">${long ? 'IN A BUY' : 'IN A SHORT'}<small>Opened ${dateText(candles[open.entryIndex].time)}</small></div>
+      <dl class="kv">
+        <dt>Entry</dt><dd>${money(open.entryPrice)}</dd>
+        <dt>Now</dt><dd class="${pnl >= 0 ? 'long' : 'short'}">${money(price)} (${pctText(pnl)})</dd>
+        <dt>Stop</dt><dd class="short">${money(stop)} (${pctText((((long ? 1 : -1) * (stop - open.entryPrice)) / open.entryPrice) * 100)})</dd>
+      </dl>
+      <p class="note">It sells when none of its strategies still want the trade, the trend turns bearish, or the stop is hit. A SELL arrow appears on the chart when that happens.</p>`;
+  } else {
+    const last = trades[trades.length - 1];
+    ui.simpleStatus.innerHTML = `
+      <h3>${asset} · ${ui.interval.value}</h3>
+      <div class="big-status muted">NO TRADE<small>Waiting for the next BUY signal</small></div>
+      ${
+        last
+          ? `<dl class="kv"><dt>Last trade</dt><dd>${last.side === 'long' ? 'BUY' : 'SHORT'} ${money(last.entryPrice)} → ${money(last.exitPrice)}</dd>
+             <dt>Result</dt><dd class="${tradePct(last) >= 0 ? 'long' : 'short'}">${pctText(tradePct(last))}</dd>
+             <dt>Closed</dt><dd>${dateText(candles[last.exitIndex].time)}</dd></dl>`
+          : ''
+      }
+      <p class="note">Signals are only confirmed when a candle closes, so an arrow never disappears once it is drawn.</p>`;
+  }
+
+  const events: { time: number; kind: 'BUY' | 'SELL' | 'SHORT' | 'COVER'; price: number; pct?: number }[] = [];
+  for (const tr of trades) {
+    const long = tr.side === 'long';
+    events.push({ time: candles[tr.entryIndex].time, kind: long ? 'BUY' : 'SHORT', price: tr.entryPrice });
+    if (tr.exitReason !== 'end') events.push({ time: candles[tr.exitIndex].time, kind: long ? 'SELL' : 'COVER', price: tr.exitPrice, pct: tradePct(tr) });
+  }
+  ui.simpleSignals.innerHTML = `
+    <h3>Latest signals</h3>
+    <ul class="signal-list">${events
+      .slice(-8)
+      .reverse()
+      .map(
+        (e) => `<li><span class="pill ${e.kind === 'BUY' || e.kind === 'COVER' ? 'buy' : 'sell'}">${e.kind}</span>
+          <span>${money(e.price)} <span class="muted">· ${dateText(e.time)}</span></span>
+          <span class="${e.pct === undefined ? 'muted' : e.pct >= 0 ? 'long' : 'short'}">${e.pct === undefined ? '' : pctText(e.pct)}</span></li>`,
+      )
+      .join('')}</ul>`;
+
+  const r = (walkforward.limit as Record<string, { trades: number; winRate: number; profitFactor: number; perYear?: number }>)[
+    `${strategyId}:${ui.symbol.value}:${ui.interval.value}`
+  ];
+  ui.simpleRecord.innerHTML = r
+    ? `<h3>Track record (tested on unseen history)</h3>
+       <div class="stat-row">
+         <div><b>${(r.winRate * 100).toFixed(0)}%</b><span>trades won</span></div>
+         <div><b>${r.perYear ? r.perYear.toFixed(0) : r.trades}</b><span>${r.perYear ? 'trades / year' : 'trades'}</span></div>
+         <div><b class="${r.profitFactor >= 1.2 ? 'long' : r.profitFactor < 1 ? 'short' : ''}">${r.profitFactor.toFixed(2)}</b><span>profit factor</span></div>
+       </div>
+       <p class="note">Signal Composite: Supertrend, RSI(2) pullback and band reversion working together, long only, never in a bearish trend${
+         jevOn ? ', with Jev able to veto' : ''
+       }. Measured with limit-order fees and funding on history after each coin's first two years. It will still have losing streaks; size positions so a string of stops is survivable.</p>`
+    : '';
 }
 
 function renderFrontier(description: string, params: Record<string, number>) {
@@ -345,7 +508,8 @@ async function run() {
     // Drop the still-forming bar so every signal is computed on closed candles.
     candles = all.slice(0, -1);
     await analyze(id);
-    chart.timeScale().setVisibleLogicalRange({ from: candles.length - 200, to: candles.length + 5 });
+    const span = mode === 'simple' ? 120 : 200;
+    chart.timeScale().setVisibleLogicalRange({ from: candles.length - span, to: candles.length + 5 });
     let forming: Candle | null = null;
     stopStream = streamCandles(symbol, interval, (c, closed) => {
       if (id !== runId) return;
@@ -364,6 +528,26 @@ async function run() {
     ui.run.disabled = false;
   }
 }
+
+function setMode(next: Mode, rerun = true) {
+  mode = next;
+  document.body.classList.toggle('mode-simple', mode === 'simple');
+  document.body.classList.toggle('mode-advanced', mode === 'advanced');
+  document.querySelectorAll<HTMLButtonElement>('.modes button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === mode)));
+  try {
+    localStorage.setItem('signal-mode', mode);
+  } catch {
+    /* ignore */
+  }
+  if (mode === 'simple') {
+    // Simple mode always shows the best overall strategy with limit-order costs.
+    ui.strategy.value = composite.id;
+    ui.orderType.value = 'limit';
+  }
+  if (rerun) void run();
+}
+document.querySelectorAll<HTMLButtonElement>('.modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode as Mode)));
+setMode(mode, false);
 
 ui.run.addEventListener('click', run);
 ui.symbol.addEventListener('change', run);

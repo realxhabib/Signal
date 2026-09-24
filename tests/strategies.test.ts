@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { higherTimeframe } from '../src/indicators';
-import { STRATEGIES } from '../src/strategies';
+import { composite } from '../src/composite';
+import { STRATEGIES as BASE } from '../src/strategies';
+
+const STRATEGIES = [...BASE, composite];
 import type { Candle } from '../src/types';
 
 // Deterministic random walk with trends and pullbacks.
@@ -73,5 +76,20 @@ describe('quant mined rules', () => {
     const full = quantStrategy.build(c, quantStrategy.defaults, ctx).signals.filter((s) => s.index < 1100);
     const prefix = quantStrategy.build(c.slice(0, 1100), quantStrategy.defaults, ctx).signals;
     expect(prefix.map((s) => [s.index, s.side])).toEqual(full.map((s) => [s.index, s.side]));
+  });
+});
+
+import { votes } from '../src/composite';
+
+describe('composite votes', () => {
+  it('match on every bar whether or not later bars exist', () => {
+    const c = series(1500, 14_400);
+    for (const s of BASE) {
+      const full = votes(c, s);
+      for (let cut = 600; cut < 1500; cut += 7) {
+        const prefix = votes(c.slice(0, cut), s);
+        expect(Array.from(prefix), `${s.id} @${cut}`).toEqual(Array.from(full.slice(0, cut)));
+      }
+    }
   });
 });

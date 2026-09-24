@@ -39,6 +39,8 @@ interface Position {
 export interface BacktestResult {
   trades: Trade[];
   equity: { time: number; value: number }[];
+  /** Decisions made on the final bar's close that would fill at the next open. */
+  pending: { exit: boolean; signal: Signal | null };
 }
 
 /**
@@ -172,8 +174,9 @@ export function backtest(
     equityCurve.push({ time: bar.time, value: equity + mark });
   }
 
+  const pendingState = { exit: pendingExit, signal: pending as Signal | null };
   if (pos) close(candles.length - 1, candles[candles.length - 1].close, 'end');
-  return { trades, equity: equityCurve };
+  return { trades, equity: equityCurve, pending: pendingState };
 }
 
 export interface Stats {

@@ -4,13 +4,39 @@ Buy/sell signals for Bitcoin (plus ETH and SOL), drawn on a TradingView
 [lightweight-charts](https://github.com/tradingview/lightweight-charts) chart. Several walk-forward-tested strategies
 generate signals, and [Jev](https://typesafe.ai), TypeSafe AI's System One model, can veto them.
 
+## Simple and Advanced modes
+
+- **Simple** (default) shows only the best overall strategy, the **Signal Composite**: large BUY/SELL arrows on the
+  chart, entry and stop lines for the open trade, a status card (*IN A BUY*, *NO TRADE*, or *BUY NOW* / *SELL NOW*
+  when a decision was confirmed on the last close), the latest signals with prices and results, and its track record.
+- **Advanced** unlocks the strategy picker, Jev filter, leverage, risk, order type, backtest tables, walk-forward
+  panels and the market-context panel.
+
+## Signal Composite (best overall)
+
+Supertrend, RSI(2) pullback and band reversion vote at every candle. The composite buys when any of them wants a
+long and the trend regime isn't bearish, and sells when none do (3 ATR protective stop). Scored on history after
+each coin's first two years, limit-order fees and funding included:
+
+| | BTC 4h | ETH 4h | SOL 4h | BTC 1h | ETH 1h | SOL 1h |
+|---|---|---|---|---|---|---|
+| Win rate | 60% | 58% | 63% | 60% | 56% | 59% |
+| Trades / year | 28 | 29 | 31 | 99 | 100 | 97 |
+| Profit factor | 1.27 | 2.09 | 2.52 | 1.43 | 1.52 | 1.46 |
+
+Versus Supertrend alone it trades 3–4× more often with a much higher win rate (Supertrend wins ~35–40%) for similar
+total profit. The line-up was chosen after comparing fixed line-ups across coins, so treat these numbers as slightly
+optimistic. A fully blind walk-forward that re-picks the line-up every 6 months from all 63 combinations was still
+profitable on 1h for all three coins (PF 1.34–1.51). `npm run composite` regenerates the numbers.
+
 ## Strategies
 
-Pick one in the app. Every strategy computes signals on **closed bars only**; tests check that none of them repaint.
+Pick one in Advanced mode. Every strategy computes signals on **closed bars only**; tests check that none of them repaint.
 
 | Strategy | Idea | Character |
 |---|---|---|
-| Supertrend trend-follow (default) | Supertrend flips up while price is above a rising EMA; ride it until the next flip | Wins ~1 in 3 trades, but the winners are large |
+| Signal Composite (default) | The three strategies below voting together, gated by regime | Most signals at a ~56–63% win rate, profitable on every coin tested |
+| Supertrend trend-follow | Supertrend flips up while price is above a rising EMA; ride it until the next flip | Wins ~1 in 3 trades, but the winners are large |
 | Trend pullback (RSI 2) | Uptrend on the chart and the daily; buy a 2-period-RSI washout; sell the first bounce | Wins ~2 in 3 trades, small profit per trade |
 | A+ stacked pullback | RSI(2) washout + close under the lower Bollinger band + stretched below the 20 EMA, uptrend on two timeframes | Rare trades |
 | Trend band reversion | Uptrend + close below the lower Bollinger band; exit at the mid band | |

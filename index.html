@@ -5,39 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Signal</title>
   </head>
-  <body>
+  <body class="mode-simple">
     <header class="bar">
       <strong class="brand">Signal</strong>
-      <label>Strategy <select id="strategy"></select></label>
+      <div class="modes" role="tablist" aria-label="View mode">
+        <button type="button" data-mode="simple" role="tab">Simple</button>
+        <button type="button" data-mode="advanced" role="tab">Advanced</button>
+      </div>
       <label>Asset <select id="symbol"></select></label>
       <label>Timeframe <select id="interval"></select></label>
-      <label title="Use Jev as a judge that can veto indicator signals">
+      <label class="adv">Strategy <select id="strategy"></select></label>
+      <label class="adv" title="Use Jev as a judge that can veto signals">
         <input type="checkbox" id="useJev" checked /> Jev filter
       </label>
-      <label>Leverage <input id="leverage" type="number" min="1" max="100" step="1" value="5" /></label>
-      <label>Risk %/trade <input id="riskPct" type="number" min="0.1" max="10" step="0.1" value="1" /></label>
-      <label title="Limit orders pay maker fees (~0.02%); market orders pay taker fees (~0.05%) plus slippage">
+      <label class="adv">Leverage <input id="leverage" type="number" min="1" max="100" step="1" value="3" /></label>
+      <label class="adv">Risk %/trade <input id="riskPct" type="number" min="0.1" max="10" step="0.1" value="1" /></label>
+      <label class="adv" title="Limit orders pay maker fees (~0.02%); market orders pay taker fees (~0.05%) plus slippage">
         Orders <select id="orderType"><option value="limit">Limit (maker)</option><option value="market">Market (taker)</option></select>
       </label>
-      <button id="run">Run</button>
+      <button id="run" class="adv">Run</button>
       <span id="status" class="status"></span>
     </header>
     <main class="layout">
       <section class="charts">
         <div id="chart" class="chart"></div>
-        <div id="equity" class="equity"></div>
+        <div id="equity" class="equity adv"></div>
       </section>
       <aside class="panel">
-        <div class="card" id="latest"></div>
-        <div class="card" id="walkforward"></div>
-        <div class="card" id="context"></div>
-        <div class="card">
+        <div class="card simple" id="simpleStatus"></div>
+        <div class="card simple" id="simpleSignals"></div>
+        <div class="card simple" id="simpleRecord"></div>
+        <div class="card adv" id="latest"></div>
+        <div class="card adv" id="walkforward"></div>
+        <div class="card adv" id="context"></div>
+        <div class="card adv">
           <h3 id="statsTitle">Backtest (bars loaded in app)</h3>
           <p id="statsWarn" class="note short" hidden></p>
           <table id="stats"></table>
           <p class="note">Fills at next bar open, with fees, slippage, ATR stops and isolated-margin liquidation. Past performance does not predict future results.</p>
         </div>
-        <div class="card">
+        <div class="card adv">
           <h3>Recent trades</h3>
           <table id="trades" class="trades"></table>
         </div>
