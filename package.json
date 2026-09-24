@@ -29,5 +29,8 @@
     "vitest": "^5.0.1"
   },
   "private": true,
-  "type": "module"
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  }
 }

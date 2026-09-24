@@ -34,8 +34,18 @@ npm run dev                 # http://localhost:5173
 
 Production: `npm run build && npm start` (serves `dist/` plus the Jev proxy on port 3000).
 
-The API key stays on the server. The browser calls `/api/jev`, and `server/jevProxy.ts` adds the key and the
-pinned model. Without a key the app still works and shows indicator-only signals.
+The API key stays on the server. The browser calls `/api/jev` and sends only the market summary. The server
+(`api/jev.ts`) adds the key, the pinned model and a fixed set of questions, so a public deployment can't be used
+as a general-purpose proxy for your key. Without a key the app still works and shows indicator-only signals.
+
+## Deploy to Vercel
+
+1. Import the GitHub repo in Vercel. `vercel.json` already sets the framework (Vite), build command and output folder.
+2. In **Project → Settings → Environment Variables**, add `TYPESAFE_API_KEY` (and optionally `JEV_MODEL`).
+3. Deploy. The chart is served as a static site and `api/jev.ts` runs as a serverless function at `/api/jev`.
+
+Anyone with the URL can load the page and trigger Jev calls on your key. Calls are cheap and cached per bar, but
+if you want the site private, turn on Vercel's Deployment Protection.
 
 Market data comes from Binance's public mirror (`data-api.binance.vision`), with a websocket for live bars.
 

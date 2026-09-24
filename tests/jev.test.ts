@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { approves, askJev, buildState, defaultJevThresholds, parseVerdict, questions } from '../src/jev';
+import { approves, askJev, buildState, defaultJevThresholds, parseVerdict } from '../src/jev';
 import { computeIndicators, defaultStrategy } from '../src/strategy';
 import type { Candle } from '../src/types';
 
@@ -41,7 +41,7 @@ describe('jev', () => {
     const v = await askJev({ a: 1 }, fetchMock as unknown as typeof fetch);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('/api/jev');
-    expect(JSON.parse(init.body as string).questions).toEqual(questions);
+    expect(JSON.parse(init.body as string)).toEqual({ state: { a: 1 } });
     expect(v.direction).toBe('long');
     expect(v.trapProb).toBe(0.2);
   });

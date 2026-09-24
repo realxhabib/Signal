@@ -1,3 +1,4 @@
+import { questions } from '../api/jev';
 import type { IndicatorSet } from './strategy';
 import type { Candle, Side, Signal } from './types';
 
@@ -83,48 +84,7 @@ export function buildState(candles: Candle[], ind: IndicatorSet, sig: Signal, as
   };
 }
 
-export const questions = {
-  regime: {
-    type: 'choice',
-    instructions: 'Which market regime best describes `state` right now?',
-    criteria: {
-      trending_up: 'Sustained uptrend with higher highs and supportive momentum',
-      trending_down: 'Sustained downtrend with lower lows and supportive momentum',
-      ranging: 'Sideways, mean-reverting price with weak trend strength',
-      choppy_volatile: 'Erratic, high-volatility whipsaw with no reliable direction',
-    },
-  },
-  direction: {
-    type: 'choice',
-    instructions:
-      'A disciplined leveraged trader with a 2 ATR stop and a 3R target is deciding what to do on the next candle. Which action has the highest expected value given `state`?',
-    criteria: {
-      long: 'Open a long position',
-      short: 'Open a short position',
-      stand_aside: 'Do not trade; the edge is unclear or risk is too high',
-    },
-  },
-  trap: {
-    type: 'noul',
-    instructions:
-      'Is the `proposed_trade` likely to be a false breakout or whipsaw that hits a 2 ATR stop before moving meaningfully in its favour?',
-    criteria: {
-      true: 'Likely trap: exhaustion, overextension, fading momentum or choppy conditions',
-      false: 'Clean setup: momentum, trend and volume support the trade',
-    },
-  },
-  conviction: {
-    type: 'score',
-    instructions: 'How high-quality is the `proposed_trade` setup?',
-    criteria: [
-      'Very poor: signals conflict, avoid',
-      'Weak: marginal edge',
-      'Moderate: some confluence with notable risks',
-      'Strong: clear confluence, few red flags',
-      'Exceptional: textbook, fully aligned setup',
-    ],
-  },
-} as const;
+export { questions };
 
 interface JevAnswer {
   type: string;
@@ -181,7 +141,7 @@ export async function askJev(state: unknown, fetchImpl: typeof fetch = fetch): P
   const res = await fetchImpl('/api/jev', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ state, questions }),
+    body: JSON.stringify({ state }),
   });
   if (!res.ok) throw new Error(`Jev ${res.status}: ${await res.text()}`);
   return parseVerdict(await res.json());
