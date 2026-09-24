@@ -45,6 +45,13 @@ export interface RiskParams {
   partialR?: number; // take partial profit at N x initial risk (0/undefined = off)
   partialFrac?: number; // fraction of the position closed at the partial target
   breakevenAfterPartial?: boolean; // move the stop to entry once the partial is taken
+  /** Level-based position management (all sizes are fractions of the planned full position). */
+  entryFrac?: number; // bought at the signal; the rest comes from scaleIn levels (default 1)
+  scaleIn?: { atr: number; frac: number; bars: number }[]; // limit adds at first entry ∓ atr × ATR, valid for `bars`
+  pyramid?: { r: number; frac: number }[]; // adds when price reaches first entry ± r × initial risk
+  breakevenAfterAdd?: boolean; // after a pyramid add, raise the stop to the first entry
+  scaleOut?: { r: number; frac: number }[]; // take profit on part of the position at first entry ± r × initial risk
+  swingStop?: number; // stop beyond the extreme of the last N bars (min 1 ATR, max 5 ATR) instead of stopAtr
   startEquity: number;
 }
 
@@ -60,4 +67,6 @@ export interface Trade {
   qty: number;
   pnl: number; // net of fees
   rMultiple: number;
+  /** Every fill of the trade, for level-based position management. */
+  fills?: { index: number; price: number; qty: number; kind: 'entry' | 'scale-in' | 'add' | 'scale-out' | 'exit' }[];
 }

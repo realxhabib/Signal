@@ -12,11 +12,12 @@ import {
 } from 'lightweight-charts';
 import './styles.css';
 import { backtest, defaultRisk, summarize, type BacktestResult, type Stats } from './backtest';
-import { ALLOCATION, composite, modeOf, RECOMMENDED, type MarketMode } from './composite';
+import { ALLOCATION, composite, LEVELS, modeOf, RECOMMENDED, SPLIT, type MarketMode } from './composite';
 import { GRADE_SIZE, gradeSignals, type Grade } from './grade';
 import portfolioStats from './portfolioStats.json';
-import { applyBtcGate, btcRegimeByTime, coinStatus, type CoinStatus } from './scan';
+import { alignRegime, applyBtcGate, btcRegimeByTime, coinStatus, type CoinStatus } from './scan';
 import { lastMonday, MOMENTUM, momentumPicks } from './momentum';
+import { safeLeverage } from './sizing';
 import { ASSETS, INTERVALS, loadCandles, streamCandles, type Interval } from './data';
 import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from './jev';
 import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './quant';
@@ -140,7 +141,7 @@ async function analyze(id: number) {
   const candidates = out.signals;
   // Altcoin longs wait while Bitcoin's own trend is bearish (composite only).
   const gated = isComposite ? applyBtcGate(candidates, ui.symbol.value, btcRegime) : candidates;
-  const risk = { ...riskParams(), ...out.risk };
+  const risk = { ...riskParams(), ...out.risk, ...(isComposite ? LEVELS : {}) };
 
   let jevError: string | null = null;
   if (ui.useJev.checked && gated.length) {
@@ -288,6 +289,16 @@ function render(
       text: `${word(tr.side)}${g ? ` ${g}` : ''}${simple ? '' : ` ${money(tr.entryPrice)}`}`,
       size,
     });
+    for (const f of tr.fills ?? [])
+      if (f.kind === 'add')
+        m.push({
+          time: t(candles[f.index].time),
+          position: long ? 'belowBar' : 'aboveBar',
+          shape: long ? 'arrowUp' : 'arrowDown',
+          color: long ? COLORS.long : COLORS.short,
+          text: simple ? 'ADD ½' : `ADD ½ ${money(f.price)}`,
+          size: size * 0.75,
+        });
     if (tr.exitReason === 'end') continue; // still open
     const pct = tradePct(tr);
     const why = tr.exitReason === 'liquidation' ? ' LIQ' : tr.exitReason === 'stop' ? ' stop' : '';
@@ -339,7 +350,9 @@ const openTrade = (trades: Trade[]) => {
   return last && last.exitReason === 'end' ? last : null;
 };
 
+const hasAdd = (tr: Trade) => !!tr.fills?.some((f) => f.kind === 'add');
 function stopPrice(tr: Trade, out: StrategyOutput, risk: RiskParams) {
+  if (risk.breakevenAfterAdd && hasAdd(tr)) return tr.entryPrice; // stop moved to entry after the pyramid add
   const a = out.atr[tr.entryIndex - 1];
   return tr.entryPrice - (tr.side === 'long' ? 1 : -1) * risk.stopAtr * a;
 }
@@ -377,7 +390,7 @@ function renderSimple(
   const openingNow = pending.signal && (!open || pending.signal.side !== open.side) ? pending.signal : null;
   const side = (s: 'long' | 'short') => (s === 'long' ? 'LONG' : 'SHORT');
   const explain = '<p class="note"><b class="long">LONG</b> = you profit if the price rises. <b class="short">SHORT</b> = you profit if it falls. CLOSE = exit the position.</p>';
-  let sizing: { entry: number; stop: number; grade?: Grade; side: 'long' | 'short'; mode: MarketMode } | null = null;
+  let sizing: { entry: number; stop: number; grade?: Grade; side: 'long' | 'short'; mode: MarketMode; added?: boolean } | null = null;
 
   if (openingNow || closingNow) {
     const opening = !!openingNow;
@@ -404,7 +417,9 @@ function renderSimple(
     const stop = stopPrice(open, out, risk);
     const g = grades.get(open.entryIndex - 1);
     const pnl = (((long ? 1 : -1) * (price - open.entryPrice)) / open.entryPrice) * 100;
-    sizing = { entry: open.entryPrice, stop, grade: g, side: open.side, mode: modeAt(candles[open.entryIndex - 1].time) };
+    // Size from the original stop distance (the stop may since have moved to the entry after the add).
+    const origStop = open.entryPrice - (long ? 1 : -1) * risk.stopAtr * out.atr[open.entryIndex - 1];
+    sizing = { entry: open.entryPrice, stop: origStop, grade: g, side: open.side, mode: modeAt(candles[open.entryIndex - 1].time), added: hasAdd(open) };
     ui.simpleStatus.innerHTML = `
       <h3>${asset} · ${ui.interval.value}</h3>
       ${modeBanner()}
@@ -413,6 +428,13 @@ function renderSimple(
         <dt>Entry</dt><dd>${money(open.entryPrice)}</dd>
         <dt>Now</dt><dd class="${pnl >= 0 ? 'long' : 'short'}">${money(price)} (${pctText(pnl)})</dd>
         <dt>Stop</dt><dd class="short">${money(stop)} (${pctText((((long ? 1 : -1) * (stop - open.entryPrice)) / open.entryPrice) * 100)})</dd>
+        ${
+          risk.pyramid
+            ? hasAdd(open)
+              ? `<dt>Added ½</dt><dd>at ${money(open.fills!.find((f) => f.kind === 'add')!.price)} · stop moved to entry</dd>`
+              : `<dt>Add ½ at</dt><dd>${money(open.entryPrice + (long ? 1 : -1) * 2 * Math.abs(open.entryPrice - stop))} (+2R), then stop → entry</dd>`
+            : ''
+        }
         ${g ? `<dt>Signal strength</dt><dd>${GRADE_TEXT[g]}</dd>` : ''}
       </dl>
       <p class="note">It closes when none of its strategies still want the trade, the trend turns against it, or the stop is hit. A CLOSE arrow appears on the chart when that happens.</p>
@@ -484,7 +506,7 @@ function renderSimple(
     }. Limit-order fees and real funding included; only history after each coin’s first two years counts. *${new Date().getUTCFullYear()} so far. Stress test bad case: −${Math.round(pf.stress.badCaseDrawdown * 100)}% drawdown.</p>`;
 }
 
-function renderSizing(s: { entry: number; stop: number; grade?: Grade; side: 'long' | 'short'; mode: MarketMode } | null) {
+function renderSizing(s: { entry: number; stop: number; grade?: Grade; side: 'long' | 'short'; mode: MarketMode; added?: boolean } | null) {
   const pf = portfolioStats.balanced;
   const riskPct = pf.riskPct;
   const alloc = s ? ALLOCATION[s.mode] : null;
@@ -493,6 +515,7 @@ function renderSizing(s: { entry: number; stop: number; grade?: Grade; side: 'lo
   const riskAmt = (accountSize * riskPct * mult) / 100;
   const dist = s ? Math.abs(s.entry - s.stop) : 0;
   const qty = dist ? riskAmt / dist : 0;
+  const safeLev = s ? safeLeverage(s.entry, s.stop) : 1;
   const coin = ui.symbol.value.replace('USDT', '');
   ui.simpleSizing.innerHTML = `
     <h3>Position size</h3>
@@ -502,11 +525,13 @@ function renderSizing(s: { entry: number; stop: number; grade?: Grade; side: 'lo
         ? `<dl class="kv">
             <dt>Risk on this trade</dt><dd>${money(riskAmt)} (${(riskPct * mult).toFixed(2)}%${s.grade ? `, grade ${s.grade}` : ''}${s.side === 'short' ? `, ${s.mode} mode short × ${sideMult}` : ''})</dd>
             <dt>Position</dt><dd>${qty.toPrecision(4)} ${coin} ≈ ${money(qty * s.entry)}</dd>
-            <dt>Margin at 3x</dt><dd>${money((qty * s.entry) / 3)}</dd>
+            <dt>${s.added ? 'Added at +2R' : 'Add at +2R'}</dt><dd>${(qty / 2).toPrecision(4)} ${coin} (½ position)${s.added ? ' · total ' + (qty * 1.5).toPrecision(4) : ''}</dd>
+            <dt>Max safe leverage</dt><dd>${safeLev}x <span class="muted">(liquidation beyond the stop)</span></dd>
+            <dt>Margin at ${safeLev}x</dt><dd>${money((qty * s.entry) / safeLev)}</dd>
           </dl>`
         : '<p class="muted">Shows how much to buy when a signal is live.</p>'
     }
-    <p class="note">Recommended: base risk ${riskPct}% of the account per trade (${portfolioStats.conservative.riskPct}% for smaller swings). Bull mode: longs at 1×, up to 5. Neutral: longs 1× (up to 5) + shorts ½× (up to 3). Bear: shorts ¾× (up to 5), no longs. Exchange leverage 3x is plenty (the system averaged ${pf.avgLeverage}x, peak ${pf.peakLeverage}x). If the stop is hit you lose only the “risk” amount.</p>`;
+    <p class="note">Recommended: base risk ${riskPct}% of the account per trade (${portfolioStats.conservative.riskPct}% for smaller swings). Bull mode: longs at 1×, up to 5. Neutral: longs 1× (up to 5) + shorts ½× (up to 3). Bear: shorts ¾× (up to 5), no longs. When a trade reaches +2R, add half a position and move the stop to your entry. Split the account ${SPLIT['4h'] * 100}% on 4h signals and ${SPLIT['1h'] * 100}% on 1h signals (switch the timeframe to see each). Leverage only sets how much margin each position locks up: your risk comes from the stop. Use at most the “max safe leverage” shown for each trade so liquidation sits beyond the stop (the whole account averaged ${pf.avgLeverage}x exposure, peak ${pf.peakLeverage}x). If the stop is hit you lose only the “risk” amount.</p>`;
   $<HTMLInputElement>('acct').addEventListener('change', (e) => {
     accountSize = Math.max(100, Number((e.target as HTMLInputElement).value) || accountSize);
     try {
@@ -516,6 +541,19 @@ function renderSizing(s: { entry: number; stop: number; grade?: Grade; side: 'lo
     }
     renderSizing(s);
   });
+}
+
+const SEC: Record<string, number> = { '15m': 900, '1h': 3600, '4h': 14_400, '1d': 86_400 };
+/**
+ * Market-mode regime keyed by the given bar times. Intraday views below 4h follow Bitcoin's 4h trend
+ * (as in the research); 4h and 1d use Bitcoin on the same timeframe.
+ */
+async function regimeFor(interval: string, times: number[], sameIntervalBtc: Candle[] | null): Promise<Map<number, number>> {
+  if (SEC[interval] < SEC['4h']) {
+    const btc4 = (await loadCandles('BTCUSDT', '4h')).slice(0, -1);
+    return alignRegime(times, SEC[interval], btcRegimeByTime(btc4), SEC['4h']);
+  }
+  return btcRegimeByTime(sameIntervalBtc ?? (await loadCandles('BTCUSDT', interval as Interval)).slice(0, -1));
 }
 
 let momentumFor = -1;
@@ -586,11 +624,13 @@ async function renderScanner() {
     );
   };
   draw();
-  let btc: Map<number, number> | null = null;
+  let btc4: Map<number, number> | null = null;
+  let btcSame: Map<number, number> | null = null;
   try {
-    btc = btcRegimeByTime((await loadCandles('BTCUSDT', interval, 1000)).slice(0, -1));
+    if (SEC[interval] < SEC['4h']) btc4 = btcRegimeByTime((await loadCandles('BTCUSDT', '4h', 1000)).slice(0, -1));
+    else btcSame = btcRegimeByTime((await loadCandles('BTCUSDT', interval, 1000)).slice(0, -1));
   } catch {
-    /* scan without the BTC gate */
+    /* scan without the market-mode gate */
   }
   const queue = Object.keys(ASSETS);
   await Promise.all(
@@ -599,6 +639,7 @@ async function renderScanner() {
         try {
           const c = (await loadCandles(sym, interval, 1000).catch(() => loadCandles(sym, interval, 1000))).slice(0, -1);
           if (id !== scanId) return;
+          const btc = btc4 ? alignRegime(c.map((b) => b.time), SEC[interval], btc4, SEC['4h']) : btcSame;
           rows.set(sym, coinStatus(c, sym, btc, true));
         } catch {
           rows.set(sym, 'error');
@@ -714,7 +755,8 @@ async function run() {
     // Drop the still-forming bar so every signal is computed on closed candles.
     candles = all.slice(0, -1);
     let btcCandles = btc ? btc.slice(0, -1) : candles;
-    btcRegime = btcRegimeByTime(btcCandles);
+    btcRegime = await regimeFor(interval, candles.map((b) => b.time), btcCandles).catch(() => btcRegimeByTime(btcCandles));
+    if (id !== runId) return;
     await analyze(id);
     if (mode === 'simple' && scannedInterval !== interval) {
       scannedInterval = interval;
@@ -734,7 +776,7 @@ async function run() {
             const latest = await loadCandles('BTCUSDT', interval, 5).catch(() => []);
             for (const b of latest.slice(0, -1)) if (b.time > btcCandles[btcCandles.length - 1].time) btcCandles.push(b);
           } else btcCandles = candles;
-          btcRegime = btcRegimeByTime(btcCandles);
+          btcRegime = await regimeFor(interval, candles.map((b) => b.time), btcCandles).catch(() => btcRegimeByTime(btcCandles));
           await analyze(id);
           if (mode === 'simple') void renderScanner();
         };

@@ -62,6 +62,14 @@ export const RECOMMENDED = { mask: 0b000111, threshold: 1, gate: 1, shorts: 1, s
  * Regime-adaptive allocation (research/regime-adaptive.ts, RESULTS-round5.md). Bitcoin's trend sets the
  * market mode; risk is a multiple of the base risk per trade (1% of the account).
  */
+/**
+ * Position levels (research/levels.ts, RESULTS-final-exam.md): when a trade reaches +2R, add half a position
+ * and move the stop to the entry, so total risk never exceeds the original 1R.
+ */
+export const LEVELS = { pyramid: [{ r: 2, frac: 0.5 }], breakevenAfterAdd: true };
+/** Account split between the 4h and 1h Signal Composite (1h reads the market mode from Bitcoin's 4h trend). */
+export const SPLIT = { '4h': 0.8, '1h': 0.2 } as const;
+
 export type MarketMode = 'bull' | 'neutral' | 'bear';
 export const ALLOCATION: Record<MarketMode, { longRisk: number; longSlots: number; shortRisk: number; shortSlots: number }> = {
   bull: { longRisk: 1, longSlots: 5, shortRisk: 0, shortSlots: 0 },

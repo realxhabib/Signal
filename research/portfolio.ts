@@ -7,22 +7,24 @@ import { backtest } from '../src/backtest';
 import { composite } from '../src/composite';
 import type { Params } from '../src/strategies';
 import type { Candle } from '../src/types';
-import type { Trade } from '../src/types';
+import type { RiskParams, Trade } from '../src/types';
 import { DAY, dataset, fmt, limitRisk } from './lib';
 import { UNIVERSE } from './universe';
 
 export interface PTrade extends Trade { sym: string; stopDist: number; candles: Candle[] }
 
-export async function collectTrades(iv: string, params: Params = composite.defaults, symbols = UNIVERSE) {
+export async function collectTrades(iv: string, params: Params = composite.defaults, symbols = UNIVERSE, riskOverride: Partial<RiskParams> = {}) {
   const trades: PTrade[] = [];
   const candlesBySym = new Map<string, Candle[]>();
   for (const sym of symbols) {
     const d = await dataset(sym, iv);
     const out = composite.build(d.candles, params);
-    const risk = { ...limitRisk, ...out.risk };
+    const risk = { ...limitRisk, ...out.risk, ...riskOverride };
     for (const t of backtest(d.candles, out.signals, out.atr, risk, { ...out.rules, funding: d.funding }).trades) {
       if (t.entryTime < d.testStart || t.exitReason === 'end') continue;
-      trades.push({ ...t, sym, stopDist: risk.stopAtr * out.atr[t.entryIndex - 1], candles: d.candles });
+      // Initial risk per unit, recovered exactly from the trade (also correct for swing stops).
+      const stopDist = t.pnl !== 0 && t.rMultiple !== 0 ? t.pnl / t.rMultiple / t.qty : risk.stopAtr * out.atr[t.entryIndex - 1];
+      trades.push({ ...t, sym, stopDist, candles: d.candles });
     }
     candlesBySym.set(sym, d.candles);
   }
@@ -38,6 +40,8 @@ export interface SimOptions {
   caps?: (time: number) => { long: number; short: number }; // regime-dependent slots (overrides the two above)
   weight?: (t: PTrade) => number; // extra size multiplier (e.g. from a filter or model)
   priority?: (t: PTrade) => number; // order simultaneous entries (higher first)
+  /** When slots are full, close the weakest open same-side position if the new trade scores higher by `margin`. */
+  rotate?: { score: (t: PTrade) => number; margin: number };
   /** Cut risk while the account is in drawdown: full risk above `start`, `minMult` × risk at `full` drawdown or worse. */
   ddBrake?: { start: number; full: number; minMult: number };
 }
@@ -54,10 +58,34 @@ export function simulate(trades: PTrade[], candlesBySym: Map<string, Candle[]>, 
 
   let equity = 1;
   let peakEq = 1;
-  const open: { t: PTrade; qty: number; riskAmt: number; last: number }[] = [];
+  type Open = { t: PTrade; qty: number; riskAmt: number; last: number };
+  const mark = (p: Open, time: number) => {
+    const c = closeAt.get(p.t.sym)!.get(time);
+    if (c !== undefined) p.last = c;
+    const dir = p.t.side === 'long' ? 1 : -1;
+    if (!p.t.fills) return { value: dir * (p.last - p.t.entryPrice) * p.qty, notional: p.last * p.qty };
+    // Multi-fill trade (scale-ins, pyramid adds, scale-outs): replay fills up to now.
+    const scale = p.qty / p.t.qty;
+    let q = 0;
+    let avg = 0;
+    let banked = 0;
+    for (const f of p.t.fills) {
+      if (p.t.candles[f.index].time > time) break;
+      if (f.kind === 'entry' || f.kind === 'scale-in' || f.kind === 'add') {
+        avg = (avg * q + f.price * f.qty) / (q + f.qty);
+        q += f.qty;
+      } else if (f.kind === 'scale-out') {
+        banked += dir * (f.price - avg) * f.qty;
+        q -= f.qty;
+      }
+    }
+    return { value: (dir * (p.last - avg) * q + banked) * scale, notional: p.last * q * scale };
+  };
+  const open: Open[] = [];
   const curve: { time: number; equity: number }[] = [];
   let taken = 0;
   let skipped = 0;
+  let rotations = 0;
   let maxLev = 0;
   let levSum = 0;
   let levN = 0;
@@ -98,7 +126,19 @@ export function simulate(trades: PTrade[], candlesBySym: Map<string, Candle[]>, 
         skipped++;
         continue;
       }
-      if ((cap && sameSide >= cap) || (o.maxOpenRiskPct && openRisk + riskFrac > o.maxOpenRiskPct / 100)) {
+      if (cap && sameSide >= cap && o.rotate) {
+        const same = open.filter((p) => p.t.side === t.side);
+        const weakest = same.reduce((w, p) => (o.rotate!.score(p.t) < o.rotate!.score(w.t) ? p : w), same[0]);
+        if (weakest && o.rotate.score(t) > o.rotate.score(weakest.t) + o.rotate.margin) {
+          // Close the weakest at the last close (plus a round of fees) to make room.
+          const m = mark(weakest, time);
+          equity += m.value - m.notional * 0.0004;
+          open.splice(open.indexOf(weakest), 1);
+          rotations++;
+        }
+      }
+      const sameNow = perSide ? open.filter((p) => p.t.side === t.side).length : open.length;
+      if ((cap && sameNow >= cap) || (o.maxOpenRiskPct && openRisk + riskFrac > o.maxOpenRiskPct / 100)) {
         skipped++;
         continue;
       }
@@ -122,10 +162,9 @@ export function simulate(trades: PTrade[], candlesBySym: Map<string, Candle[]>, 
     let mtm = 0;
     let notional = 0;
     for (const p of open) {
-      const c = closeAt.get(p.t.sym)!.get(time);
-      if (c !== undefined) p.last = c;
-      mtm += (p.t.side === 'long' ? 1 : -1) * (p.last - p.t.entryPrice) * p.qty;
-      notional += p.last * p.qty;
+      const m = mark(p, time);
+      mtm += m.value;
+      notional += m.notional;
     }
     const lev = notional / Math.max(equity + mtm, 1e-9);
     maxLev = Math.max(maxLev, lev);
@@ -134,7 +173,7 @@ export function simulate(trades: PTrade[], candlesBySym: Map<string, Candle[]>, 
     curve.push({ time, equity: equity + mtm });
     if (equity + mtm <= 0) break;
   }
-  return { curve, taken, skipped, maxLev, avgLev: levSum / levN };
+  return { curve, taken, skipped, rotations, maxLev, avgLev: levSum / levN };
 }
 
 export function curveStats(curve: { time: number; equity: number }[]) {

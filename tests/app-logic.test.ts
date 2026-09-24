@@ -63,3 +63,15 @@ describe('momentum sleeve', () => {
     expect(p.shorts.map((x) => x.symbol)).toEqual(['C0', 'C1', 'C2', 'C3']);
   });
 });
+
+import { safeLeverage } from '../src/sizing';
+
+describe('safe leverage', () => {
+  it('keeps liquidation beyond the stop', () => {
+    // 4% stop: 0.8 / (0.04 + 0.005) = 17.7 → 17x; liquidation ≈ 1/17 − 0.5% = 5.4% > 4%
+    expect(safeLeverage(100, 96)).toBe(17);
+    const lev = safeLeverage(100, 90); // 10% stop
+    expect(1 / lev - 0.005).toBeGreaterThan(0.1);
+    expect(safeLeverage(100, 99.9)).toBe(20); // capped
+  });
+});

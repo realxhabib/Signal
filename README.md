@@ -33,17 +33,22 @@ model scores, size 1.5×; B = 1×; C = bottom 20%, 0.5×).
 Scored on history after each coin's first two years, limit-order fees and **real historical funding** included.
 Designed on BTC/ETH/SOL; the other 17 coins are an out-of-sample test: **4h profitable on 20/20 coins, 1h on 19/20.**
 
-### Whole account (20 coins, 4h, `research/portfolio-report.ts`)
+### Whole account (`research/portfolio-report.ts`)
+
+20 coins; 80% of the account follows 4h signals and 20% follows 1h signals (the 1h sleeve reads the market mode
+from Bitcoin's 4h trend). **Pyramiding:** when a trade reaches +2R, add half a position and move the stop to the
+entry, so total risk never exceeds the original 1R.
 
 | Base risk | 2019* | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026* | Per year | Max DD | Sharpe |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1% | +1% | +159% | +264% | +3% | +113% | +27% | +130% | +27% | 84% | 31% | 1.75 |
-| 0.5% | +1% | +66% | +105% | +2% | +52% | +16% | +63% | +14% | 41% | 17% | 1.72 |
+| 1% | +7% | +246% | +512% | −1% | +193% | +67% | +129% | +52% | 130% | 35% | 1.95 |
+| 0.5% | +4% | +95% | +180% | +1% | +84% | +34% | +69% | +26% | 61% | 19% | 1.92 |
 
-\*partial years. **Every calendar year was positive**, including the 2022 bear market (it was −17% long-only and
-−12% with static shorts). About 8 of 29 quarters still lost money (worst about −14%), so expect losing stretches.
-Average leverage ~0.45x (peak ~2.2x): 3x on the exchange is plenty. Settings are robust: every tested neighbour
-(bear short size 0.75–1.25×, 3–7 slots) had a Sharpe of 1.56–1.75, and all 5-slot variants had no losing year.
+\*partial years. **Locked final exam:** every change in this round was chosen on 2019 → Sep 2025 only; on the untouched
+last 12 months the shipped setup made **+39%** (vs +24% for the previous setup, +34% with pyramiding alone). That
+year was weaker than the history (Sharpe ~1 vs ~1.9), so expect less than the headline going forward. About a quarter
+of quarters lose money. Position exposure peaks around 7× equity at 1% risk (1h stops are tight), so use the per-trade
+**max safe leverage** shown in the app (liquidation beyond the stop) rather than one fixed setting.
 
 **Optional momentum sleeve.** Each Monday, long the 4 strongest coins and short the 4 weakest (14-day return), equal
 dollars each side. Blind walk-forward: 24%/yr on its own, correlation 0.22 with the main account; 20% of capital in
@@ -146,6 +151,11 @@ and open-interest / long-short metrics (from Dec 2021; `research/futures.ts`, fr
 | Add shorts? | Thin edge per trade; with their own slots at half risk they improve the account (Sharpe 1.64 → 1.70, DD 31% → 27%) | `RESULTS-round4.md` |
 | Profit in bull *and* bear? | Market mode by BTC trend (bull: longs only; bear: shorts only, ¾ size, 5 slots): every year positive, 84%/yr, Sharpe 1.75 | `RESULTS-round5.md` |
 | Market-neutral sleeves? | Momentum (long strong / short weak) diversifies (corr 0.22); funding carry income has dried up | `RESULTS-round5.md` |
+| Buy/sell in levels? | Pyramid (+½ at +2R, stop → entry) beats plain risk at equal drawdown (85% vs 78%/yr at 31% DD); scale-ins, far scale-outs and swing stops all hurt | `RESULTS-levels-4h.md` |
+| More slots? | No: 8–10 long slots add no return and push drawdowns to 46–48% (crypto crashes together); 5 is right | `RESULTS-account-tests.md` |
+| Grade sizing / momentum rotation? | Grade sizing adds return with proportionally more risk; rotation into stronger coins is noise | `RESULTS-account-tests.md` |
+| More coins / timeframes? | 13 extra coins: no gain (they alone made 11%/yr); adding a 20% 1h sleeve: Sharpe 1.77 → 1.93 | `RESULTS-scale-tests.md` |
+| Does it hold on unseen data? | Locked last 12 months: shipped setup +39% vs +24% before | `RESULTS-final-exam.md` |
 | Futures positioning? | "Retail crowded long" predicts weaker longs (confirmed on 6 holdout coins), but doesn't move the portfolio. Funding / OI filters were noise | `RESULTS-futures-shorts-ml.md` |
 | ML scoring? | Predicting wins picks the low-profit trades (win rate ≠ profit). Predicting profit works: top quintile +0.40R vs ~+0.05R. Shipped as A/B/C grades | `RESULTS-futures-shorts-ml.md` |
 | Overfit? | Every setting nudge stays profitable (PF 1.39–1.71); PBO 30%; 176/189 line-ups profitable; deflated Sharpe says the *exact* pick isn't special, the approach is | `RESULTS-overfitting.md` |

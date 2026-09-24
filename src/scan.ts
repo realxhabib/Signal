@@ -1,5 +1,5 @@
 import { backtest, defaultRisk } from './backtest';
-import { ALLOCATION, composite, modeOf, RECOMMENDED } from './composite';
+import { ALLOCATION, composite, LEVELS, modeOf, RECOMMENDED } from './composite';
 import { computeFeatures } from './features';
 import type { Candle, Signal, Trade } from './types';
 
@@ -7,6 +7,21 @@ import type { Candle, Signal, Trade } from './types';
 export function btcRegimeByTime(btc: Candle[]): Map<number, number> {
   const r = computeFeatures(btc).regime;
   return new Map(btc.map((b, i) => [b.time, r[i]]));
+}
+
+/**
+ * Regime for lower-timeframe bars from a higher-timeframe regime map: each bar gets the regime of the latest
+ * higher-timeframe bar that had closed by the bar's own close (no look-ahead). Used so 1h trades follow
+ * Bitcoin's 4h trend, as in the research.
+ */
+export function alignRegime(times: number[], barSec: number, htf: Map<number, number>, htfSec: number): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const t of times) {
+    const key = Math.floor((t + barSec) / htfSec) * htfSec - htfSec;
+    const v = htf.get(key);
+    if (v !== undefined) out.set(t, v);
+  }
+  return out;
 }
 
 /**
@@ -32,7 +47,7 @@ export function coinStatus(c: Candle[], symbol: string, btcRegime: Map<number, n
   const p = allowShorts ? RECOMMENDED : { ...RECOMMENDED, shorts: 0 };
   const out = composite.build(c, p);
   const signals = applyBtcGate(out.signals, symbol, btcRegime);
-  const res = backtest(c, signals, out.atr, { ...defaultRisk, feePct: 0.02, slippagePct: 0, ...out.risk }, out.rules);
+  const res = backtest(c, signals, out.atr, { ...defaultRisk, feePct: 0.02, slippagePct: 0, ...out.risk, ...LEVELS }, out.rules);
   const last: Trade | undefined = res.trades[res.trades.length - 1];
   const open = last && last.exitReason === 'end' ? last : null;
   const price = c[c.length - 1].close;

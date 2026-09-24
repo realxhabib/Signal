@@ -1,56 +1,50 @@
-// Recommended account setup: year-by-year results and stress test, stored for the app.
+// Numbers shown in the app: the shipped account (80% 4h + 20% 1h Signal Composite, market modes,
+// pyramid at +2R) over the full history, by year, with a stress test.
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ALLOCATION, modeOf, RECOMMENDED } from '../src/composite';
-import { computeFeatures } from '../src/features';
-import { history } from './history';
-import { fmt } from './lib';
-import { collectTrades, curveStats, monthly, simulate, stress } from './portfolio';
+import { ALLOCATION, LEVELS, SPLIT } from '../src/composite';
+import { accountTrades, runAccount } from './account';
+import { stress } from './portfolio';
+import { perf, type Daily } from './sleeves';
+import { UNIVERSE } from './universe';
 
-const iv = '4h';
-const { trades, candlesBySym } = await collectTrades(iv, RECOMMENDED);
-const btc = await history('BTCUSDT', iv);
-const reg = computeFeatures(btc).regime;
-const idx = new Map(btc.map((b, i) => [b.time, i]));
-const barSec = btc[1].time - btc[0].time;
-const gate = (t: (typeof trades)[number]) => {
-  const a = ALLOCATION[modeOf(reg[idx.get(t.candles[t.entryIndex - 1].time) ?? -1])];
-  return t.side === 'long' ? a.longRisk : a.shortRisk;
+const DAY = 86_400;
+const daily = (curve: { time: number; equity: number }[]) => {
+  const eod = new Map<number, number>();
+  for (const p of curve) eod.set(Math.floor(p.time / DAY) * DAY, p.equity);
+  const ds = [...eod.keys()].sort((a, b) => a - b);
+  return new Map(ds.slice(1).map((d, i) => [d, eod.get(d)! / eod.get(ds[i])! - 1]));
 };
-const caps = (time: number) => {
-  const a = ALLOCATION[modeOf(reg[idx.get(time - barSec) ?? -1])];
-  return { long: a.longSlots, short: a.shortSlots };
-};
-const setups = { conservative: 0.5, balanced: 1 } as const;
-const report: Record<string, unknown> = { coins: candlesBySym.size, interval: iv, allocation: ALLOCATION };
-for (const [name, riskPct] of Object.entries(setups)) {
-  const r = simulate(trades, candlesBySym, { riskPct, sizing: 'risk', weight: gate, caps });
-  const s = curveStats(r.curve);
+const t4 = await accountTrades('4h', undefined, undefined, LEVELS);
+const t1 = await accountTrades('1h', undefined, undefined, LEVELS);
+const report: Record<string, unknown> = { coins: UNIVERSE.length, allocation: ALLOCATION, split: SPLIT, levels: LEVELS };
+for (const [name, riskPct] of [['conservative', 0.5], ['balanced', 1]] as const) {
+  const a4 = await runAccount('4h', t4.trades, t4.candlesBySym, { riskPct }, 'all');
+  const a1 = await runAccount('1h', t1.trades, t1.candlesBySym, { riskPct, regimeInterval: '4h' }, 'all');
+  const d4 = daily(a4.curve);
+  const d1 = daily(a1.curve);
+  // Before the 1h sleeve has history, the whole account runs on 4h.
+  const xs: Daily[] = [...d4.keys()].sort((a, b) => a - b).map((d) => ({ time: d, ret: d1.has(d) ? SPLIT['4h'] * d4.get(d)! + SPLIT['1h'] * d1.get(d)! : d4.get(d)! }));
+  const p = perf(xs);
   const years: Record<string, number> = {};
-  let y = '';
-  let startEq = r.curve[0].equity;
-  let lastEq = startEq;
-  for (const p of r.curve) {
-    const k = new Date(p.time * 1000).toISOString().slice(0, 4);
-    if (y && k !== y) {
-      years[y] = +(lastEq / startEq - 1).toFixed(3);
-      startEq = lastEq;
-    }
-    y = k;
-    lastEq = p.equity;
+  const lastYear = new Date(xs[xs.length - 1].time * 1000).getUTCFullYear().toString();
+  for (const [y, v] of p.years) years[y === lastYear ? `${y} YTD` : y] = +v.toFixed(3);
+  const months = new Map<string, number>();
+  for (const x of xs) {
+    const k = new Date(x.time * 1000).toISOString().slice(0, 7);
+    months.set(k, (months.get(k) ?? 1) * (1 + x.ret));
   }
-  years[`${y} YTD`] = +(lastEq / startEq - 1).toFixed(3);
-  const st = stress(monthly(r.curve), 1);
+  const st = stress([...months.values()].map((v) => v - 1), 1);
   report[name] = {
     riskPct,
-    cagr: +s.cagr.toFixed(3),
-    maxDrawdown: +s.maxDd.toFixed(3),
-    sharpe: +s.sharpe.toFixed(2),
-    avgLeverage: +r.avgLev.toFixed(2),
-    peakLeverage: +r.maxLev.toFixed(2),
+    cagr: +p.cagr.toFixed(3),
+    maxDrawdown: +p.maxDd.toFixed(3),
+    sharpe: +p.sharpe.toFixed(2),
+    avgLeverage: +(SPLIT['4h'] * a4.avgLev + SPLIT['1h'] * a1.avgLev).toFixed(2),
+    peakLeverage: +Math.max(a4.maxLev, a1.maxLev).toFixed(2),
     years,
     stress: { medianCagr: +st.cagrMedian.toFixed(3), badCaseCagr: +st.cagrP5.toFixed(3), medianDrawdown: +st.ddMedian.toFixed(3), badCaseDrawdown: +st.ddP95.toFixed(3) },
   };
-  console.log(name, fmt(s.cagr * 100, 1) + '%/yr', 'maxDD', fmt(s.maxDd * 100, 1) + '%', 'sharpe', fmt(s.sharpe), JSON.stringify(years));
+  console.log(name, JSON.stringify(report[name]));
 }
 writeFileSync(join(import.meta.dirname, '..', 'src', 'portfolioStats.json'), JSON.stringify(report) + '\n');

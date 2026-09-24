@@ -109,3 +109,56 @@ describe('partial take-profit', () => {
     expect(t.rMultiple).toBeCloseTo(0.5); // half the position made 1R, the rest broke even
   });
 });
+
+describe('level-based position management', () => {
+  const lv = { ...noCosts, takeProfitR: 0, stopAtr: 2 };
+
+  it('scale-in: half at the signal, the rest on a limit 1 ATR lower', () => {
+    const c = flat(12);
+    c[4] = bar(4, 100, 100, 98.5, 99); // dips to 99 = entry(100) - 1 ATR
+    c[8] = bar(8, 104, 104, 104, 104);
+    const exitLong = c.map((_, i) => i === 7); // decided at bar 7's close, filled at bar 8's open (104)
+    const t = backtest(c, [sig(2, 'long')], atr1(12), { ...lv, entryFrac: 0.5, scaleIn: [{ atr: 1, frac: 0.5, bars: 5 }] }, { exitLong }).trades[0];
+    expect(t.fills!.map((f) => f.kind)).toEqual(['entry', 'scale-in', 'exit']);
+    // avg entry 99.5, exit at next open 104: (4.5 × full) / (2 × full) = 2.25R
+    expect(t.rMultiple).toBeCloseTo(2.25);
+  });
+
+  it('scale-in limit expires if not reached in time', () => {
+    const c = flat(12);
+    c[9] = bar(9, 100, 100, 98, 99);
+    const t = backtest(c, [sig(2, 'long')], atr1(12), { ...lv, entryFrac: 0.5, scaleIn: [{ atr: 1, frac: 0.5, bars: 3 }] }).trades[0];
+    expect(t.fills).toBeUndefined(); // only entry + exit
+  });
+
+  it('pyramid: adds at +1R and moves the stop to breakeven, capping risk', () => {
+    const c = flat(12);
+    c[4] = bar(4, 100, 102.5, 100, 102); // +1R (stop 2 ATR) → add half at 102, stop → 100
+    c[6] = bar(6, 101, 101, 99, 99.5); // back through 100 → stopped
+    const t = backtest(c, [sig(2, 'long')], atr1(12), { ...lv, pyramid: [{ r: 1, frac: 0.5 }], breakevenAfterAdd: true }).trades[0];
+    expect(t.exitReason).toBe('stop');
+    // original 1.0 at 100 → 100 (0), add 0.5 at 102 → 100 (−1 per unit × 0.5) = −1 / 2 = −0.5R
+    expect(t.rMultiple).toBeCloseTo(-0.5);
+  });
+
+  it('scale-out: takes a third at 3R and a third at 6R, the rest rides', () => {
+    const c = flat(14);
+    c[4] = bar(4, 100, 106.5, 100, 106);
+    c[6] = bar(6, 106, 112.5, 106, 112);
+    c[10] = bar(10, 110, 110, 110, 110);
+    const exitLong = c.map((_, i) => i === 9);
+    const t = backtest(c, [sig(2, 'long')], atr1(14), { ...lv, scaleOut: [{ r: 3, frac: 1 / 3 }, { r: 6, frac: 1 / 3 }] }, { exitLong }).trades[0];
+    // 1/3 × 6 + 1/3 × 12 + 1/3 × 10 = 9.33 per unit / 2 = 4.67R
+    expect(t.rMultiple).toBeCloseTo(4.667, 2);
+  });
+
+  it('swing stop sits beyond the recent low (bounded to 1–5 ATR)', () => {
+    const c = flat(12);
+    c[1] = bar(1, 100, 100, 97, 100); // swing low 97 within the last 5 bars
+    c[5] = bar(5, 100, 100, 96.5, 97); // 97 − 0.25 ATR = 96.75 is hit
+    const t = backtest(c, [sig(2, 'long')], atr1(12), { ...lv, swingStop: 5 }).trades[0];
+    expect(t.exitReason).toBe('stop');
+    expect(t.exitPrice).toBeCloseTo(96.75);
+    expect(t.rMultiple).toBeCloseTo(-1);
+  });
+});
