@@ -1,5 +1,5 @@
 // Downloads and caches full kline history for research (not used by the app).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Candle } from '../src/types';
 
@@ -9,6 +9,8 @@ const REST = 'https://data-api.binance.vision/api/v3/klines';
 export async function history(symbol: string, interval: string): Promise<Candle[]> {
   mkdirSync(CACHE, { recursive: true });
   const file = join(CACHE, `${symbol}-${interval}.json`);
+  // A cache refreshed in the last 12 hours is used as is (no rewrite), so parallel research jobs never collide.
+  if (existsSync(file) && Date.now() - statSync(file).mtimeMs < 12 * 3600_000) return JSON.parse(readFileSync(file, 'utf8'));
   let out: Candle[] = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
   let start = out.length ? out[out.length - 1].time * 1000 + 1 : 0;
   for (;;) {

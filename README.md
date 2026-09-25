@@ -174,6 +174,14 @@ and open-interest / long-short metrics (from Dec 2021; `research/futures.ts`, fr
 Remaining caveats: prices are spot (not perp) candles; limit orders are assumed to fill; the universe is today's top
 coins (survivorship bias); results lean on the 2020–21 and 2023–25 bull markets.
 
+## Portfolio plan and risk dial (research round 8, [summary](research/RESULTS-round8.md))
+
+- **Split:** 40% Signal Composite trades, 20% weekly momentum pairs, 40% 🧩 Pattern basket.
+- **Results at 1% risk per trade:** +81%/yr, 25% max drawdown, Sharpe 2.28, every year positive (bear market 2022: +14%).
+- **Locked final year:** +92%.
+- **Risk dial:** the in-app card shows 0.5–3% risk per trade; 2% ≈ +184%/yr with a 42% drawdown.
+- **Pattern basket:** now 33 coins and an ensemble of 4 learned pattern libraries (Sharpe 1.33 vs 0.86).
+
 ## 🧩 Pattern basket (research round 7, experimental) ([summary](research/RESULTS-round7.md))
 
 The app learned its own chart patterns. It grouped every coin's recent 24-candle (4h) shape, together with
@@ -186,7 +194,7 @@ today's market-neutral target weights, averaging the last 3 days of readings.
 - **Research years:** Sharpe 0.86, 23% max drawdown.
 - **Locked final year:** +49%, Sharpe 2.2.
 - **Phone alert:** set `ALERT_BASKET=1` to get the basket each day.
-- **Retraining:** re-export the model twice a year with `npx tsx research/export-patterns.ts`.
+- **Retraining:** re-export the model twice a year with `npx tsx research/export-patterns.ts` (4 libraries, 33 coins since round 8).
 
 Also tested this round and rejected:
 - evolved formulas (genetic programming), which depended too much on the random seed;

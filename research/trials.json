@@ -478,5 +478,113 @@
   "name": "Pattern library: 24-bar shapes, 32 patterns, 18-bar target traded daily",
   "sharpe": 0.6424,
   "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "R8 basket: 20 coins, 1 library (shipped)",
+  "sharpe": 0.8622,
+  "days": 2093
+ },
+ {
+  "round": 6,
+  "name": "Pattern sizing k=0.25 (0.5×–1.5×)",
+  "sharpe": 1.9735,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Pattern sizing k=0.5 (0.5×–1.5×)",
+  "sharpe": 1.9592,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Pattern sizing k=0.5 (0.25×–2×)",
+  "sharpe": 1.9317,
+  "days": 2592
+ },
+ {
+  "round": 7,
+  "name": "R8 basket: 33 coins, 1 library",
+  "sharpe": 1.0748,
+  "days": 2093
+ },
+ {
+  "round": 6,
+  "name": "Pattern veto: skip trades with z < −1",
+  "sharpe": 1.9949,
+  "days": 2592
+ },
+ {
+  "round": 8,
+  "name": "Mix trend 40% / 20% / 40% chop 40% / 20% / 40%",
+  "sharpe": 2.2077,
+  "days": 2093
+ },
+ {
+  "round": 8,
+  "name": "Mix trend 40% / 20% / 40% chop 60% / 20% / 20%",
+  "sharpe": 2.2565,
+  "days": 2093
+ },
+ {
+  "round": 8,
+  "name": "Mix trend 40% / 20% / 40% chop 80% / 20% / 0%",
+  "sharpe": 2.2461,
+  "days": 2093
+ },
+ {
+  "round": 8,
+  "name": "Mix trend 40% / 0% / 60% chop 60% / 20% / 20%",
+  "sharpe": 2.2204,
+  "days": 2093
+ },
+ {
+  "round": 8,
+  "name": "Mix trend 40% / 20% / 40% chop 60% / 40% / 0%",
+  "sharpe": 2.2109,
+  "days": 2093
+ },
+ {
+  "round": 8,
+  "name": "Mix trend 40% / 40% / 20% chop 80% / 20% / 0%",
+  "sharpe": 2.2102,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "R8 basket: 20 coins, ensemble of 4",
+  "sharpe": 0.9823,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "R8 basket: 33 coins, ensemble of 4",
+  "sharpe": 1.3268,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "R8 basket: 33 coins, ensemble of 4, 1% band",
+  "sharpe": 1.2586,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "R8 basket: 33 coins, ensemble of 4, 2% band",
+  "sharpe": 1.1086,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "R8 basket: 33 coins, ensemble of 4, vol target 20%",
+  "sharpe": 1.317,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "R8 basket: 20 coins, ensemble of 4, vol target 20%",
+  "sharpe": 0.9149,
+  "days": 2093
  }
 ]

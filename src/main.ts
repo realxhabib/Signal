@@ -25,7 +25,8 @@ import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './qu
 import { STRATEGIES as BASE_STRATEGIES, type StrategyOutput } from './strategies.js';
 import { computeIndicators, defaultStrategy } from './strategy.js';
 import { etDay, etIso, etText, etTick } from './time.js';
-import { PATTERN_BASKET, patternBasket } from './patterns.js';
+import { BASKET_NAMES, PATTERN_BASKET, patternBasket } from './patterns.js';
+import portfolioPlan from './portfolioPlan.json' with { type: 'json' };
 import { goldOutcome, makePlan, type TradePlan } from './plan.js';
 import type { Candle, RiskParams, Signal, Trade } from './types.js';
 import walkforward from './walkforward.json' with { type: 'json' };
@@ -52,6 +53,7 @@ const ui = {
   planTable: $<HTMLDivElement>('planTable'),
   allPlans: $<HTMLDivElement>('allPlans'),
   basket: $<HTMLDivElement>('basket'),
+  portfolioPlan: $<HTMLDivElement>('portfolioPlan'),
   simpleRecord: $<HTMLDivElement>('simpleRecord'),
   simpleSizing: $<HTMLDivElement>('simpleSizing'),
   scanner: $<HTMLDivElement>('scanner'),
@@ -842,15 +844,47 @@ async function renderMomentum() {
     <p class="note">Market-neutral: equal dollars long the ${MOMENTUM.perSide} strongest coins and short the ${MOMENTUM.perSide} weakest (${MOMENTUM.lookbackDays}-day return), refreshed every Monday; next ${next}. It earns from the gap between winners and losers, not from market direction. Suggested size: ${MOMENTUM.share * 100}% of the account, which in testing cut the worst drawdown from 30% to 25%. It was tested on today's top coins, so real results will likely be lower.</p>`;
 }
 
+/** Portfolio plan: how to split the account across the three strategies, results by year, and the risk dial. */
+function renderPortfolioPlan() {
+  const p = portfolioPlan;
+  const w = (v: number) => `${Math.round(v * 100)}%`;
+  const years = Object.entries(p.years)
+    .map(([y, v]) => `<div><b class="${v >= 0 ? 'long' : 'short'}">${v >= 0 ? '+' : ''}${Math.round(v * 100)}%</b><span>${y === 'Locked year' ? 'locked yr' : y === '2025' ? '2025*' : y}</span></div>`)
+    .join('');
+  const dial = p.dial
+    .map(
+      (d) => `<tr class="${d.risk === 1 ? 'sel' : ''}"><td><b>${d.risk}%</b></td><td class="long">+${Math.round(d.cagr * 100)}%</td><td class="short">−${Math.round(d.dd * 100)}%</td>
+      <td class="${d.locked >= 0 ? 'long' : 'short'}">${d.locked >= 0 ? '+' : ''}${Math.round(d.locked * 100)}%</td><td>${(d.deepDdOdds * 100).toFixed(1)}%</td></tr>`,
+    )
+    .join('');
+  ui.portfolioPlan.innerHTML = `
+    <h3>Portfolio plan · all three strategies together</h3>
+    <div class="alloc">
+      <div style="flex:${p.mix.a}"><b>${w(p.mix.a)}</b><span>Signal Composite trades (alerts)</span></div>
+      <div style="flex:${p.mix.m}"><b>${w(p.mix.m)}</b><span>Weekly momentum pairs</span></div>
+      <div style="flex:${p.mix.b}"><b>${w(p.mix.b)}</b><span>🧩 Pattern basket</span></div>
+    </div>
+    <p class="note">Split of the account. The mix was picked on 2020 → Sep 2025 only (best Sharpe with every year profitable), then checked on the locked final year. Returns by year at 1% risk per trade:</p>
+    <div class="stat-row years">${years}</div>
+    <h4>Risk dial · pick your risk per trade</h4>
+    <div class="table-scroll"><table class="plan">
+      <tr><th>Risk / trade</th><th>Return / year (2020–25)</th><th>Worst drawdown</th><th>Locked year</th><th>Odds of a 50% drawdown in a year</th></tr>
+      ${dial}
+    </table></div>
+    <p class="note">Higher risk multiplies both returns and drawdowns, and deep drawdowns become likely above 2%. The backtest is on today's top coins with perfect execution, so expect real results to be lower. Start at 0.5–1%, and only move up after the live record matches the backtest. *2025 up to Sep 24.</p>`;
+}
+
 let basketFor = -1;
 /** Pattern basket card: today's target weights from the app's own learned chart patterns. */
 async function renderBasket() {
   const day = Math.floor(Date.now() / 1000 / 86_400);
   if (basketFor === day) return;
   basketFor = day;
+  if (!ui.basket) return;
   ui.basket.innerHTML = '<h3>🧩 Pattern basket</h3><p class="muted">Reading chart patterns on every coin…</p>';
   const four = new Map<string, Candle[]>();
-  const queue = Object.keys(ASSETS);
+  const coins = PATTERN_BASKET.coins;
+  const queue = [...coins];
   await Promise.all(
     Array.from({ length: 4 }, async () => {
       for (let sym = queue.shift(); sym; sym = queue.shift()) {
@@ -862,7 +896,7 @@ async function renderBasket() {
       }
     }),
   );
-  const b = patternBasket(new Map(Object.keys(ASSETS).filter((s) => four.has(s)).map((s) => [s, four.get(s)!])));
+  const b = patternBasket(new Map(coins.filter((s) => four.has(s)).map((s) => [s, four.get(s)!])));
   if (!b) {
     ui.basket.innerHTML = '<h3>🧩 Pattern basket</h3><p class="muted">Not enough data right now.</p>';
     basketFor = -1;
@@ -872,17 +906,17 @@ async function renderBasket() {
   ui.basket.innerHTML = `
     <h3>🧩 Pattern basket · patterns the app learned itself (experimental)</h3>
     <div class="table-scroll"><table class="plan">
-      <tr><th>Coin</th><th>Side</th><th>Weight (of basket capital)</th><th>Latest pattern (weight averages 3 days)</th></tr>
+      <tr><th>Coin</th><th>Side</th><th>Weight (of basket capital)</th><th>Latest pattern reading (weight averages 3 days)</th></tr>
       ${rows
         .map(
-          (r) => `<tr data-sym="${r.symbol}"><td><b>${r.symbol.replace('USDT', '')}</b> <span class="muted">${ASSETS[r.symbol]}</span></td>
+          (r) => `<tr data-sym="${r.symbol}"><td><b>${r.symbol.replace('USDT', '')}</b> <span class="muted">${ASSETS[r.symbol] ?? BASKET_NAMES[r.symbol] ?? ''}</span></td>
         <td class="${r.weight > 0 ? 'long' : 'short'}">${r.weight > 0 ? 'LONG' : 'SHORT'}</td>
         <td>${(Math.abs(r.weight) * 100).toFixed(1)}%</td>
-        <td class="muted">${r.pattern === null ? '—' : `#${r.pattern + 1}${r.score ? ` (${r.score > 0 ? 'bullish' : 'bearish'} history)` : ' (no clear history)'}`}</td></tr>`,
+        <td class="muted">${r.score === null ? '—' : Math.abs(r.score) < 0.25 ? 'neutral' : `${r.score > 0 ? 'bullish' : 'bearish'} (${r.score > 0 ? '+' : ''}${r.score.toFixed(2)})`}</td></tr>`,
         )
         .join('')}
     </table></div>
-    <p class="note">Set ${etText(b.asOf)} · next rebalance ${etText(b.next)}. Once a day, rebalance to these weights with limit orders; longs and shorts are equal in size, so it earns from coins beating each other, not from market direction. How it works: the app grouped every coin's recent 24-candle (4h) chart shape into 32 patterns with k-means and learned which ones were followed by out- or under-performance (trained through ${PATTERN_BASKET.trainedThrough}); the target averages the last 3 days of readings. Tested walk-forward: Sharpe 0.86 on 2020–2025 (max drawdown 23%) and +49% (Sharpe 2.2, drawdown 11%) on the locked final year it never saw. Suggested size: ${PATTERN_BASKET.share * 100}% of the account. New and experimental, so start small; the forward test from Sep 25, 2026 is the real exam. Phone alert: set <b>ALERT_BASKET=1</b> in Vercel.</p>`;
+    <p class="note">Set ${etText(b.asOf)} · next rebalance ${etText(b.next)}. Once a day, rebalance to these weights with limit orders; longs and shorts are equal in size, so it earns from coins beating each other, not from market direction. How it works: across ${coins.length} coins, ${PATTERN_BASKET.libraries} pattern libraries (k-means on each coin's recent 4h chart shape, Bitcoin's shape, volume and range) learned which shapes were followed by out- or under-performance (trained through ${PATTERN_BASKET.trainedThrough}); their readings are averaged, and the target averages the last 3 days. Tested walk-forward: Sharpe 1.33, +22%/yr, max drawdown 19% on 2020 → Sep 2025, and +19.5% (Sharpe 1.2, drawdown 8%) on the locked final year it never saw. Its share of the account is in the Portfolio plan above. New and experimental, so start small; the forward test from Sep 25, 2026 is the real exam. Phone alert: set <b>ALERT_BASKET=1</b> in Vercel.</p>`;
   ui.basket.querySelectorAll<HTMLTableRowElement>('tr[data-sym]').forEach((tr) =>
     tr.addEventListener('click', () => {
       ui.symbol.value = tr.dataset.sym!;
@@ -1131,6 +1165,7 @@ async function run() {
     if (scannedInterval !== interval) {
       scannedInterval = interval;
       void renderScanner().then(renderMomentum).then(renderBasket);
+      renderPortfolioPlan();
       renderAlerts();
     }
     const span = mode === 'simple' ? 120 : 200;

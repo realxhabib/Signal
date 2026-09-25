@@ -2,7 +2,7 @@
 import { formatAlert, latestEvents, parseLevels, type AlertEvent, type AlertLevel } from '../src/alerts.js';
 import { ASSETS, loadCandles, type Interval } from '../src/data.js';
 import { alignRegime, btcRegimeByTime } from '../src/scan.js';
-import { formatBasket, patternBasket, type Basket } from '../src/patterns.js';
+import { formatBasket, PATTERN_BASKET, patternBasket, type Basket } from '../src/patterns.js';
 import type { Candle } from '../src/types.js';
 
 const SEC: Record<string, number> = { '1h': 3600, '4h': 14_400 };
@@ -122,10 +122,10 @@ export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env;
   if (basketDue && (isOn(env.ALERT_BASKET) || opts.send === false)) {
     try {
       const all = new Map<string, Candle[]>();
-      await pool(Object.keys(ASSETS), 5, async (sym) => {
-        all.set(sym, four.get(sym) ?? (await loadCandles(sym, '4h', 1000)).filter((b) => b.time + SEC['4h'] <= now));
+      await pool(PATTERN_BASKET.coins, 5, async (sym) => {
+        all.set(sym, four.get(sym) ?? (await loadCandles(sym, '4h', 400)).filter((b) => b.time + SEC['4h'] <= now));
       });
-      basket = patternBasket(new Map(Object.keys(ASSETS).filter((s) => all.has(s)).map((s) => [s, all.get(s)!])), now);
+      basket = patternBasket(new Map(PATTERN_BASKET.coins.filter((s) => all.has(s)).map((s) => [s, all.get(s)!])), now);
     } catch (err) {
       errors.push(`basket: ${(err as Error).message}`);
     }

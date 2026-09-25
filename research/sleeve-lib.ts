@@ -16,15 +16,16 @@ export const ROUND = 7;
 export interface Panel { iv: string; syms: string[]; times: number[]; close: Float64Array[]; volume: Float64Array[]; high: Float64Array[]; low: Float64Array[] }
 const panels = new Map<string, Panel>();
 /** All coins aligned on Bitcoin's timeline (NaN where a coin has no bar yet). */
-export async function panel(iv: string): Promise<Panel> {
-  let p = panels.get(iv);
+export async function panel(iv: string, syms: string[] = UNIVERSE): Promise<Panel> {
+  const key = `${iv}|${syms.join(',')}`;
+  let p = panels.get(key);
   if (p) return p;
   const btc = await history('BTCUSDT', iv);
   const times = btc.map((b) => b.time);
   const at = new Map(times.map((t, i) => [t, i]));
   const mk = () => new Float64Array(times.length).fill(NaN);
-  p = { iv, syms: [...UNIVERSE], times, close: [], volume: [], high: [], low: [] };
-  for (const s of UNIVERSE) {
+  p = { iv, syms: [...syms], times, close: [], volume: [], high: [], low: [] };
+  for (const s of syms) {
     const c = mk(), v = mk(), h = mk(), l = mk();
     for (const b of await history(s, iv)) {
       const i = at.get(b.time);
@@ -33,7 +34,7 @@ export async function panel(iv: string): Promise<Panel> {
     }
     p.close.push(c); p.volume.push(v); p.high.push(h); p.low.push(l);
   }
-  panels.set(iv, p);
+  panels.set(key, p);
   return p;
 }
 

@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { ASSETS } from '../src/data';
 import { featuresAt, neutralWeights, rollVol } from '../src/patternFeatures';
 import model from '../src/patternModel.json';
 import { formatBasket, patternBasket, toPanel } from '../src/patterns';
@@ -16,15 +15,18 @@ function coin(seed: number, n: number, start: number): Candle[] {
   });
 }
 const start = 1_700_006_400; // 00:00 UTC
-const all = new Map(Object.keys(ASSETS).map((s, k) => [s, coin(k + 3, 400, start)]));
+const all = new Map(model.coins.map((s, k) => [s, coin(k + 3, 400, start)]));
 
 describe('pattern basket', () => {
-  it('model matches the feature layout', () => {
+  it('every library matches the feature layout', () => {
     const p = toPanel(all)!;
-    const x = featuresAt(p, p.close.map((c) => rollVol(c)), 1, 300)!;
-    expect(x).toHaveLength(model.mu.length);
-    expect(model.centroids[0]).toHaveLength(model.mu.length);
-    expect(model.scores).toHaveLength(model.centroids.length);
+    const vols = p.close.map((c) => rollVol(c));
+    for (const m of model.members) {
+      const x = featuresAt(p, vols, 1, 300, m.L, m.step)!;
+      expect(x).toHaveLength(m.mu.length);
+      expect(m.centroids[0]).toHaveLength(m.mu.length);
+      expect(m.scores).toHaveLength(m.K);
+    }
   });
 
   it('is market neutral with gross exposure at most 1, set at a 00:00 UTC close', () => {
