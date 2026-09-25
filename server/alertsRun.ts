@@ -115,9 +115,19 @@ export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env;
   const sent: string[] = [];
   // ALERT_GOLD_ONLY=1 sends gold setups only; everything else stays in the response for the app.
   const goldOnly = isOn(env.ALERT_GOLD_ONLY);
-  const fresh = events.filter((e) => (!goldOnly || e.gold) && !sentKeys.has(`${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`));
+  const unseen = events.filter((e) => !sentKeys.has(`${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`));
+  const fresh = unseen.filter((e) => !goldOnly || e.gold);
+  const log = alertLog(env);
+  if (opts.send !== false && log && unseen.length) {
+    // The forward-test record: every event the rules produced, whether or not it was sent.
+    try {
+      await log.add(unseen.map((e) => ({ ...e, level: levels[e.symbol], loggedAt: now })));
+    } catch (err) {
+      errors.push(`log: ${(err as Error).message}`);
+    }
+  }
+  if (opts.send !== false) for (const e of unseen) sentKeys.add(`${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`);
   if (opts.send !== false && fresh.length) {
-    for (const e of fresh) sentKeys.add(`${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`);
     for (const ch of channels(env)) {
       for (const e of fresh) {
         try {
@@ -156,6 +166,30 @@ export function isAuthorized(authHeader: string | null, key: string | null, env:
   if (cron && authHeader === `Bearer ${cron}`) return true;
   // Manual calls may use either secret as ?key=.
   return !!key && (key === manual || key === cron);
+}
+
+const LOG_KEY = 'signal:alerts';
+/**
+ * Optional alert log in Redis over REST (Vercel KV / Upstash: add the integration and its KV_REST_API_URL and
+ * KV_REST_API_TOKEN, or UPSTASH_REDIS_REST_URL / _TOKEN, are set for you). Keeps the latest 20,000 events.
+ */
+export function alertLog(env: Env) {
+  const url = env.KV_REST_API_URL ?? env.UPSTASH_REDIS_REST_URL;
+  const token = env.KV_REST_API_TOKEN ?? env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  const cmd = async (args: string[]) => {
+    const r = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
+    if (!r.ok) throw new Error(`redis ${r.status}`);
+    return (await r.json()) as { result: unknown };
+  };
+  return {
+    add: async (items: object[]) => {
+      if (!items.length) return;
+      await cmd(['LPUSH', LOG_KEY, ...items.map((x) => JSON.stringify(x))]);
+      await cmd(['LTRIM', LOG_KEY, '0', '19999']);
+    },
+    read: async (n = 500) => ((await cmd(['LRANGE', LOG_KEY, '0', String(n - 1)])).result as string[]).map((x) => JSON.parse(x)),
+  };
 }
 
 export async function sendTest(env: Env = process.env) {

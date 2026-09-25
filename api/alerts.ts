@@ -4,14 +4,19 @@
 //   GET /api/alerts            → check and send
 //   GET /api/alerts?dry=1      → compute events without sending
 //   GET /api/alerts?test=1     → send a test message to every configured channel
+//   GET /api/alerts?log=1&n=500 → the latest logged events (forward-test record; needs Vercel KV / Upstash Redis)
 // Auth: Vercel Cron's `Authorization: Bearer $CRON_SECRET`, or ?key=$ALERTS_KEY for manual calls.
 // Per-coin levels come from ALERT_PRIORITY / ALERT_OFF (or ?levels=BTCUSDT:p,DOGEUSDT:off on manual calls).
-import { isAuthorized, runAlerts, sendTest } from '../server/alertsRun.js';
+import { alertLog, isAuthorized, runAlerts, sendTest } from '../server/alertsRun.js';
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   if (!isAuthorized(request.headers.get('authorization'), url.searchParams.get('key'), process.env))
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   if (url.searchParams.get('test')) return Response.json(await sendTest());
+  if (url.searchParams.get('log')) {
+    const log = alertLog(process.env);
+    return log ? Response.json(await log.read(Math.min(5000, Number(url.searchParams.get('n') ?? 500)))) : Response.json({ error: 'no log configured' }, { status: 404 });
+  }
   return Response.json(await runAlerts({ send: !url.searchParams.get('dry'), levels: url.searchParams.get('levels') }));
 }

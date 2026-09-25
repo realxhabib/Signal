@@ -197,3 +197,24 @@ describe('gold alerts', () => {
     expect(text).not.toContain('add ½');
   });
 });
+
+import { alertLog } from '../server/alertsRun';
+
+describe('alert log', () => {
+  it('is off without Redis settings', () => expect(alertLog({})).toBeNull());
+  it('pushes, trims and reads events over the REST API', async () => {
+    const bodies: string[][] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (_u: string, init: RequestInit) => {
+      const args = JSON.parse(init.body as string) as string[];
+      bodies.push(args);
+      return new Response(JSON.stringify({ result: args[0] === 'LRANGE' ? [JSON.stringify({ symbol: 'BTCUSDT' })] : 1 }));
+    }) as unknown as typeof fetch;
+    const log = alertLog({ KV_REST_API_URL: 'https://kv.example', KV_REST_API_TOKEN: 't' })!;
+    await log.add([{ symbol: 'BTCUSDT', kind: 'open' }]);
+    expect(bodies[0][0]).toBe('LPUSH');
+    expect(bodies[1]).toEqual(['LTRIM', 'signal:alerts', '0', '19999']);
+    expect(await log.read(10)).toEqual([{ symbol: 'BTCUSDT' }]);
+    globalThis.fetch = real;
+  });
+});

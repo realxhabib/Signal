@@ -7,9 +7,14 @@ import type { Candle, RiskParams } from '../src/types';
 import { history } from './history';
 import { collectTrades, curveStats, monthly, simulate, stress, type PTrade, type SimOptions } from './portfolio';
 import { UNIVERSE } from './universe';
+import { FORWARD_START } from './validation';
 
 /** Everything from this date on is the locked final exam; research picks use earlier data only. */
 export const HOLDOUT_START = Date.UTC(2025, 8, 24) / 1000;
+
+export async function btcBars(iv: string) {
+  return history('BTCUSDT', iv);
+}
 
 const btcCache = new Map<string, { reg: Int8Array; idx: Map<number, number>; barSec: number }>();
 async function btcRegime(iv: string) {
@@ -29,6 +34,10 @@ export interface AccountOptions {
   priority?: (t: PTrade) => number;
   rotate?: SimOptions['rotate'];
   regimeInterval?: string; // read the market mode from Bitcoin on this timeframe (e.g. 4h for a 1h account)
+  /** Replace Bitcoin's EMA trend regime (1 bull, -1 bear, 0 neutral) with another, per Bitcoin bar on regimeInterval. */
+  regime?: Int8Array;
+  /** Extra risk multiplier by time (e.g. from a volatility forecast); applies to every new trade. */
+  riskAt?: (time: number) => number;
 }
 
 export async function accountTrades(iv: string, params: Params = RECOMMENDED, symbols = UNIVERSE, risk: Partial<RiskParams> = {}) {
@@ -40,10 +49,11 @@ export async function runAccount(
   trades: PTrade[],
   candlesBySym: Map<string, Candle[]>,
   o: AccountOptions = {},
-  period: 'research' | 'holdout' | 'all' = 'research',
+  period: 'research' | 'holdout' | 'forward' | 'all' = 'research',
 ) {
   const rIv = o.regimeInterval ?? iv;
-  const b = await btcRegime(rIv);
+  const b0 = await btcRegime(rIv);
+  const b = o.regime ? { ...b0, reg: o.regime } : b0;
   const barSecTrade = (await btcRegime(iv)).barSec;
   // Regime of the most recent `rIv` bar that had closed by the close of the bar starting at t.
   const at = (t: number) => {
@@ -51,14 +61,15 @@ export async function runAccount(
     const key = Math.floor(closeT / b.barSec) * b.barSec - b.barSec;
     return b.reg[b.idx.get(key) ?? -1];
   };
-  const inPeriod = (t: PTrade) => (period === 'all' ? true : period === 'research' ? t.entryTime < HOLDOUT_START : t.entryTime >= HOLDOUT_START);
+  const inPeriod = (t: PTrade) =>
+    period === 'all' ? true : period === 'research' ? t.entryTime < HOLDOUT_START : period === 'forward' ? t.entryTime >= FORWARD_START : t.entryTime >= HOLDOUT_START;
   const sm = o.slotMult ?? 1;
   const sim: SimOptions = {
     riskPct: o.riskPct ?? 1,
     sizing: 'risk',
     weight: (t) => {
       const a = ALLOCATION[modeOf(at(t.candles[t.entryIndex - 1].time))];
-      return (t.side === 'long' ? a.longRisk : a.shortRisk) * (o.sizeMult ? o.sizeMult(t) : 1);
+      return (t.side === 'long' ? a.longRisk : a.shortRisk) * (o.sizeMult ? o.sizeMult(t) : 1) * (o.riskAt ? o.riskAt(t.candles[t.entryIndex - 1].time) : 1);
     },
     caps: (time) => {
       const a = ALLOCATION[modeOf(at(time - barSecTrade))];
