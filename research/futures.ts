@@ -131,3 +131,23 @@ export function fundingPerBar(times: number[], barSec: number, rows: Funding[]):
   }
   return out;
 }
+
+/** Hourly premium index close (perpetual vs spot index, a fraction): the futures basis. */
+export async function premium(symbol: string): Promise<{ time: number; p: number }[]> {
+  mkdirSync(CACHE, { recursive: true });
+  const file = join(CACHE, `${symbol}-premium-1h.json`);
+  if (existsSync(file)) return JSON.parse(readFileSync(file, 'utf8'));
+  const rows: { time: number; p: number }[] = [];
+  await pool(months('2020-01'), 6, async (m) => {
+    const csv = await fetchZipCsv(`${BASE}/monthly/premiumIndexKlines/${symbol}/1h/${symbol}-1h-${m}.zip`);
+    if (!csv) return;
+    for (const line of csv.trim().split('\n')) {
+      const f = line.split(',');
+      if (!/^\d/.test(f[0])) continue;
+      rows.push({ time: Math.floor(+f[0] / 1000), p: +f[4] });
+    }
+  });
+  rows.sort((a, b) => a.time - b.time);
+  writeFileSync(file, JSON.stringify(rows));
+  return rows;
+}

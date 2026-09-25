@@ -1,0 +1,212 @@
+[
+ {
+  "round": 6,
+  "name": "Baseline: EMA market mode",
+  "sharpe": 2.0046,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states (most likely state) (59% same as EMA)",
+  "sharpe": 1.7013,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states, 60% confidence (58% same as EMA)",
+  "sharpe": 1.7318,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states AND EMA agree (67% same as EMA)",
+  "sharpe": 1.9714,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 2 states, 70% confidence (54% same as EMA)",
+  "sharpe": 1.1503,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states (most likely state), 180-bar features (59% same as EMA)",
+  "sharpe": 2.1313,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states, 60% confidence, 180-bar features (59% same as EMA)",
+  "sharpe": 2.1291,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states AND EMA agree, 180-bar features (68% same as EMA)",
+  "sharpe": 2.0459,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 2 states, 70% confidence, 180-bar features (61% same as EMA)",
+  "sharpe": 1.7472,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Baseline",
+  "sharpe": 2.0046,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Skip trades with taker flow (24) most against them (bottom 20%)",
+  "sharpe": 1.8804,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Skip trades with flow z-score most against them (bottom 20%)",
+  "sharpe": 1.9862,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Skip trades where price and flow disagree most (bottom 20%)",
+  "sharpe": 1.9594,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Skip trades with the most crowded basis (top 20%)",
+  "sharpe": 2.0838,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states (most likely state), 120-bar features (61% same as EMA)",
+  "sharpe": 1.7489,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states, 60% confidence, 120-bar features (61% same as EMA)",
+  "sharpe": 1.7443,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states AND EMA agree, 120-bar features (69% same as EMA)",
+  "sharpe": 1.9564,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 2 states, 70% confidence, 120-bar features (59% same as EMA)",
+  "sharpe": 1.3181,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states (most likely state), 252-bar features (56% same as EMA)",
+  "sharpe": 1.9849,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states, 60% confidence, 252-bar features (56% same as EMA)",
+  "sharpe": 1.9917,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 3 states AND EMA agree, 252-bar features (67% same as EMA)",
+  "sharpe": 2.0295,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HMM 2 states, 70% confidence, 252-bar features (61% same as EMA)",
+  "sharpe": 1.2578,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Baseline (fixed risk)",
+  "sharpe": 2.0046,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HAR-RV, 0.5×–1.5×",
+  "sharpe": 1.9781,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HAR-RV, cut only (0.5×–1×)",
+  "sharpe": 1.9776,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "HAR-RV, 0.25×–2×",
+  "sharpe": 2.0124,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "GARCH(1,1), 0.5×–1.5×",
+  "sharpe": 2.0587,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Hurst gate: trend trades need H above bottom 20%, reversion trades below top 20%",
+  "sharpe": 1.7653,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Hurst gate: trend trades only",
+  "sharpe": 1.7267,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Hurst gate: reversion trades only",
+  "sharpe": 2.0348,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Variance-ratio gate (both kinds)",
+  "sharpe": 1.8951,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Pairs sleeve: z ±2 → ±0.5, stop ±4, 30 days, 5 pairs",
+  "sharpe": -0.7472,
+  "days": 2444
+ },
+ {
+  "round": 6,
+  "name": "Pairs sleeve: z ±1.5 → 0, stop ±3.5, 20 days, 5 pairs",
+  "sharpe": -0.7381,
+  "days": 2444
+ },
+ {
+  "round": 6,
+  "name": "Pairs sleeve: z ±2.5 → ±0.5, stop ±4.5, 30 days, 5 pairs",
+  "sharpe": -0.726,
+  "days": 2444
+ },
+ {
+  "round": 6,
+  "name": "Pairs sleeve: z ±2 → ±0.5, stop ±4, 30 days, 10 pairs",
+  "sharpe": -0.8166,
+  "days": 2444
+ }
+]

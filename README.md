@@ -6,6 +6,13 @@ generate signals, and [Jev](https://typesafe.ai), TypeSafe AI's System One model
 
 **LONG** = a bet that the price rises; **SHORT** = a bet that it falls; **CLOSE** = exit the position.
 
+## Trade plan
+
+Every chart draws the current, next or most recent trade's **Entry**, **Stop**, **+1R**, **+2R (add ½)** and **+3R** lines,
+plus the **🥇 Gold TP** for gold trades. The **Trade plan** table under the chart lists every trade's entry, stop, targets,
+exit and result. Tap a row to draw its lines. Regular trades close on a CLOSE signal, so +1R and +3R are reference
+levels; gold trades use the fixed take-profit and time limit.
+
 ## Simple and Advanced modes
 
 - **Simple** (default) shows only the best overall strategy, the **Signal Composite**: large LONG/CLOSE arrows with
@@ -166,6 +173,28 @@ and open-interest / long-short metrics (from Dec 2021; `research/futures.ts`, fr
 
 Remaining caveats: prices are spot (not perp) candles; limit orders are assumed to fill; the universe is today's top
 coins (survivorship bias); results lean on the 2020–21 and 2023–25 bull markets.
+
+## Research round 6: new data and higher-level math ([summary](research/RESULTS-round6.md))
+
+Tested on the research years with the full account:
+- order flow (taker buy/sell imbalance, CVD);
+- futures basis;
+- Hidden Markov Model market modes;
+- HAR-RV / GARCH volatility forecasts;
+- Hurst exponent / variance ratio;
+- boosted trees with triple-barrier labels and purged walk-forward;
+- a pairs-trading sleeve.
+
+**None beat the shipped system by more than noise, so none shipped.** The one promising result, an HMM with 1-month
+features, failed its robustness check.
+
+**New validation protocol** (`research/validation.ts`):
+- the locked final year is now a one-time second opinion;
+- every variant tried is recorded for Deflated Sharpe;
+- the rules are frozen on 2026-09-25, and `research/forward.ts` scores only data after that date.
+
+**Alert log.** Add Vercel KV / Upstash Redis to the project and the alert server logs every event it produces.
+`GET /api/alerts?log=1&key=…` returns the log.
 
 ## Alerts (Telegram / SMS)
 

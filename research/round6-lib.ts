@@ -31,7 +31,7 @@ export interface Variant {
   filter1?: (t: PTrade) => boolean;
 }
 
-export interface Result { name: string; cagr: number; maxDd: number; sharpe: number; years: Map<string, number>; daily: number[]; trades4: number; trades1: number }
+export interface Result { name: string; cagr: number; maxDd: number; sharpe: number; years: Map<string, number>; daily: number[]; days: number[]; trades4: number; trades1: number }
 
 export async function evaluate(v: Variant, period: Period = 'research', record = period === 'research'): Promise<Result> {
   const { t4, t1 } = await shippedTrades();
@@ -57,7 +57,7 @@ export async function evaluate(v: Variant, period: Period = 'research', record =
   const m = daily.reduce((a, r) => a + r, 0) / daily.length;
   const sd = Math.sqrt(daily.reduce((a, r) => a + (r - m) ** 2, 0) / daily.length);
   if (record) recordTrial(ROUND, v.name, daily);
-  return { name: v.name, cagr: eq ** (1 / yrs) - 1, maxDd: dd, sharpe: sd ? (m / sd) * Math.sqrt(365) : 0, years, daily, trades4: a4.taken, trades1: a1.taken };
+  return { name: v.name, cagr: eq ** (1 / yrs) - 1, maxDd: dd, sharpe: sd ? (m / sd) * Math.sqrt(365) : 0, years, daily, days, trades4: a4.taken, trades1: a1.taken };
 }
 
 export const pct = (v: number, d = 0) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(d)}%`;
