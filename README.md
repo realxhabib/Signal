@@ -174,6 +174,28 @@ and open-interest / long-short metrics (from Dec 2021; `research/futures.ts`, fr
 Remaining caveats: prices are spot (not perp) candles; limit orders are assumed to fill; the universe is today's top
 coins (survivorship bias); results lean on the 2020–21 and 2023–25 bull markets.
 
+## 🧩 Pattern basket (research round 7, experimental) ([summary](research/RESULTS-round7.md))
+
+The app learned its own chart patterns. It grouped every coin's recent 24-candle (4h) shape, together with
+Bitcoin's shape, volume and range, into 32 patterns with k-means, and scored each pattern by how the coin
+performed against the others over the next 24 hours, using past data only. The **Pattern basket** card shows
+today's market-neutral target weights, averaging the last 3 days of readings.
+
+- **When to trade:** rebalance once a day after 00:00 UTC (8 PM ET in summer), with limit orders.
+- **Size:** about 10% of the account.
+- **Research years:** Sharpe 0.86, 23% max drawdown.
+- **Locked final year:** +49%, Sharpe 2.2.
+- **Phone alert:** set `ALERT_BASKET=1` to get the basket each day.
+- **Retraining:** re-export the model twice a year with `npx tsx research/export-patterns.ts`.
+
+Also tested this round and rejected:
+- evolved formulas (genetic programming), which depended too much on the random seed;
+- residual momentum, which duplicates the momentum sleeve;
+- Bitcoin→alt lead-lag;
+- residual reversal;
+- liquidation flushes;
+- stablecoin liquidity and DVOL filters.
+
 ## Research round 6: new data and higher-level math ([summary](research/RESULTS-round6.md))
 
 Tested on the research years with the full account:

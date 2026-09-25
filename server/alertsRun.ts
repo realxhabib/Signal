@@ -2,6 +2,8 @@
 import { formatAlert, latestEvents, parseLevels, type AlertEvent, type AlertLevel } from '../src/alerts.js';
 import { ASSETS, loadCandles, type Interval } from '../src/data.js';
 import { alignRegime, btcRegimeByTime } from '../src/scan.js';
+import { formatBasket, patternBasket, type Basket } from '../src/patterns.js';
+import type { Candle } from '../src/types.js';
 
 const SEC: Record<string, number> = { '1h': 3600, '4h': 14_400 };
 // Events already sent by this server instance (the app triggers a check after every candle close; this stops
@@ -96,6 +98,7 @@ export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env;
   const due = dueIntervals(now);
   const events: AlertEvent[] = [];
   const errors: string[] = [];
+  const four = new Map<string, Candle[]>(); // 4h candles loaded this run (reused for the pattern basket)
   if (due.length) {
     // Market mode for every timeframe comes from Bitcoin's 4h trend (as in the research and the app).
     const btc4 = (await loadCandles('BTCUSDT', '4h', 1000)).filter((b) => b.time + SEC['4h'] <= now);
@@ -104,6 +107,7 @@ export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env;
       await pool(symbols, 5, async (symbol) => {
         try {
           const c = (await loadCandles(symbol, interval, 1000)).filter((b) => b.time + SEC[interval] <= now);
+          if (interval === '4h') four.set(symbol, c);
           const regime = interval === '4h' ? btcMap : alignRegime(c.map((b) => b.time), SEC[interval], btcMap, SEC['4h']);
           for (const e of latestEvents(c, symbol, interval, regime)) if (e.barClose === barClose) events.push(e);
         } catch (err) {
@@ -112,7 +116,38 @@ export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env;
       });
     }
   }
+  // Pattern basket: once a day, after the 4h candle that closes at 00:00 UTC (8 PM ET in summer), if ALERT_BASKET=1.
+  let basket: Basket | null = null;
+  const basketDue = due.find((d) => d.interval === '4h' && d.barClose % 86_400 === 0);
+  if (basketDue && (isOn(env.ALERT_BASKET) || opts.send === false)) {
+    try {
+      const all = new Map<string, Candle[]>();
+      await pool(Object.keys(ASSETS), 5, async (sym) => {
+        all.set(sym, four.get(sym) ?? (await loadCandles(sym, '4h', 1000)).filter((b) => b.time + SEC['4h'] <= now));
+      });
+      basket = patternBasket(new Map(Object.keys(ASSETS).filter((s) => all.has(s)).map((s) => [s, all.get(s)!])), now);
+    } catch (err) {
+      errors.push(`basket: ${(err as Error).message}`);
+    }
+  }
   const sent: string[] = [];
+  if (basket && opts.send !== false && isOn(env.ALERT_BASKET) && !sentKeys.has(`basket|${basket.asOf}`)) {
+    sentKeys.add(`basket|${basket.asOf}`);
+    for (const ch of channels(env)) {
+      if (ch.name === 'sms') continue;
+      try {
+        await ch.send(formatBasket(basket), false);
+        sent.push(`${ch.name}:basket`);
+      } catch (err) {
+        errors.push(`${ch.name}: ${(err as Error).message}`);
+      }
+    }
+    try {
+      await alertLog(env)?.add([{ kind: 'basket', asOf: basket.asOf, rows: basket.rows.filter((r) => Math.abs(r.weight) > 0.001), loggedAt: now }]);
+    } catch (err) {
+      errors.push(`log: ${(err as Error).message}`);
+    }
+  }
   // ALERT_GOLD_ONLY=1 sends gold setups only; everything else stays in the response for the app.
   const goldOnly = isOn(env.ALERT_GOLD_ONLY);
   const unseen = events.filter((e) => !sentKeys.has(`${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`));
@@ -151,6 +186,7 @@ export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env;
     channels: channels(env).map((c) => c.name),
     priority: Object.keys(levels).filter((s) => levels[s] === 'priority'),
     goldOnly,
+    basket,
   };
 }
 

@@ -25,6 +25,7 @@ import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './qu
 import { STRATEGIES as BASE_STRATEGIES, type StrategyOutput } from './strategies.js';
 import { computeIndicators, defaultStrategy } from './strategy.js';
 import { etDay, etIso, etText, etTick } from './time.js';
+import { PATTERN_BASKET, patternBasket } from './patterns.js';
 import { goldOutcome, makePlan, type TradePlan } from './plan.js';
 import type { Candle, RiskParams, Signal, Trade } from './types.js';
 import walkforward from './walkforward.json' with { type: 'json' };
@@ -50,6 +51,7 @@ const ui = {
   simpleSignals: $<HTMLDivElement>('simpleSignals'),
   planTable: $<HTMLDivElement>('planTable'),
   allPlans: $<HTMLDivElement>('allPlans'),
+  basket: $<HTMLDivElement>('basket'),
   simpleRecord: $<HTMLDivElement>('simpleRecord'),
   simpleSizing: $<HTMLDivElement>('simpleSizing'),
   scanner: $<HTMLDivElement>('scanner'),
@@ -840,6 +842,56 @@ async function renderMomentum() {
     <p class="note">Market-neutral: equal dollars long the ${MOMENTUM.perSide} strongest coins and short the ${MOMENTUM.perSide} weakest (${MOMENTUM.lookbackDays}-day return), refreshed every Monday; next ${next}. It earns from the gap between winners and losers, not from market direction. Suggested size: ${MOMENTUM.share * 100}% of the account, which in testing cut the worst drawdown from 30% to 25%. It was tested on today's top coins, so real results will likely be lower.</p>`;
 }
 
+let basketFor = -1;
+/** Pattern basket card: today's target weights from the app's own learned chart patterns. */
+async function renderBasket() {
+  const day = Math.floor(Date.now() / 1000 / 86_400);
+  if (basketFor === day) return;
+  basketFor = day;
+  ui.basket.innerHTML = '<h3>🧩 Pattern basket</h3><p class="muted">Reading chart patterns on every coin…</p>';
+  const four = new Map<string, Candle[]>();
+  const queue = Object.keys(ASSETS);
+  await Promise.all(
+    Array.from({ length: 4 }, async () => {
+      for (let sym = queue.shift(); sym; sym = queue.shift()) {
+        try {
+          four.set(sym, (await loadCandles(sym, '4h', 400).catch(() => loadCandles(sym, '4h', 400))).slice(0, -1));
+        } catch {
+          /* coin skipped */
+        }
+      }
+    }),
+  );
+  const b = patternBasket(new Map(Object.keys(ASSETS).filter((s) => four.has(s)).map((s) => [s, four.get(s)!])));
+  if (!b) {
+    ui.basket.innerHTML = '<h3>🧩 Pattern basket</h3><p class="muted">Not enough data right now.</p>';
+    basketFor = -1;
+    return;
+  }
+  const rows = b.rows.filter((r) => Math.abs(r.weight) >= 0.005);
+  ui.basket.innerHTML = `
+    <h3>🧩 Pattern basket · patterns the app learned itself (experimental)</h3>
+    <div class="table-scroll"><table class="plan">
+      <tr><th>Coin</th><th>Side</th><th>Weight (of basket capital)</th><th>Latest pattern (weight averages 3 days)</th></tr>
+      ${rows
+        .map(
+          (r) => `<tr data-sym="${r.symbol}"><td><b>${r.symbol.replace('USDT', '')}</b> <span class="muted">${ASSETS[r.symbol]}</span></td>
+        <td class="${r.weight > 0 ? 'long' : 'short'}">${r.weight > 0 ? 'LONG' : 'SHORT'}</td>
+        <td>${(Math.abs(r.weight) * 100).toFixed(1)}%</td>
+        <td class="muted">${r.pattern === null ? '—' : `#${r.pattern + 1}${r.score ? ` (${r.score > 0 ? 'bullish' : 'bearish'} history)` : ' (no clear history)'}`}</td></tr>`,
+        )
+        .join('')}
+    </table></div>
+    <p class="note">Set ${etText(b.asOf)} · next rebalance ${etText(b.next)}. Once a day, rebalance to these weights with limit orders; longs and shorts are equal in size, so it earns from coins beating each other, not from market direction. How it works: the app grouped every coin's recent 24-candle (4h) chart shape into 32 patterns with k-means and learned which ones were followed by out- or under-performance (trained through ${PATTERN_BASKET.trainedThrough}); the target averages the last 3 days of readings. Tested walk-forward: Sharpe 0.86 on 2020–2025 (max drawdown 23%) and +49% (Sharpe 2.2, drawdown 11%) on the locked final year it never saw. Suggested size: ${PATTERN_BASKET.share * 100}% of the account. New and experimental, so start small; the forward test from Sep 25, 2026 is the real exam. Phone alert: set <b>ALERT_BASKET=1</b> in Vercel.</p>`;
+  ui.basket.querySelectorAll<HTMLTableRowElement>('tr[data-sym]').forEach((tr) =>
+    tr.addEventListener('click', () => {
+      ui.symbol.value = tr.dataset.sym!;
+      void run();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }),
+  );
+}
+
 let scanId = 0;
 let scannedInterval = '';
 async function renderScanner() {
@@ -1078,7 +1130,7 @@ async function run() {
     await analyze(id);
     if (scannedInterval !== interval) {
       scannedInterval = interval;
-      void renderScanner().then(renderMomentum);
+      void renderScanner().then(renderMomentum).then(renderBasket);
       renderAlerts();
     }
     const span = mode === 'simple' ? 120 : 200;

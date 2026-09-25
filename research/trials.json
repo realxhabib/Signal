@@ -208,5 +208,275 @@
   "name": "Pairs sleeve: z ±2 → ±0.5, stop ±4, 30 days, 10 pairs",
   "sharpe": -0.8166,
   "days": 2444
+ },
+ {
+  "round": 7,
+  "name": "Lead-lag 1h: BTC move > 1.5σ, hold 1h",
+  "sharpe": -1.0094,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Lead-lag 1h: BTC move > 1.5σ, hold 3h",
+  "sharpe": -0.3524,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Lead-lag 1h: BTC move > 2.5σ, hold 3h",
+  "sharpe": 0.0232,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Lead-lag 1h: BTC move > 2.5σ, hold 6h",
+  "sharpe": 0.0033,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual reversal 4h: 1-bar residual, hold 6 bars, market neutral",
+  "sharpe": -1.9899,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual reversal 4h: 6-bar residual, hold 6 bars, market neutral",
+  "sharpe": -1.469,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual reversal 4h: 6-bar residual, hold 12 bars, market neutral",
+  "sharpe": -1.1349,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual reversal 4h: 42-bar residual, hold 42 bars, market neutral",
+  "sharpe": -1.2544,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual momentum 4h: 42-bar residual, hold 42 bars, market neutral",
+  "sharpe": 1.0258,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 64 patterns",
+  "sharpe": 0.5882,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 32 patterns",
+  "sharpe": 0.6329,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 128 patterns",
+  "sharpe": -0.1658,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 12-bar shapes, 64 patterns",
+  "sharpe": 0.2516,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 48-bar shapes, 64 patterns",
+  "sharpe": 0.3193,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 32 patterns, hold 18 bars, fee 0.02%",
+  "sharpe": 1.2028,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "GP formulas (seed 7), hold 6 bars, fee 0.05%",
+  "sharpe": 0.2234,
+  "days": 1362
+ },
+ {
+  "round": 7,
+  "name": "GP formulas (seed 7), hold 18 bars, fee 0.02%",
+  "sharpe": 1.4306,
+  "days": 1362
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 64 patterns, hold 18 bars, fee 0.02%",
+  "sharpe": 1.2121,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Liquidation flush: 4h drop > 2σ with OI −2%, hold 12h",
+  "sharpe": 0.027,
+  "days": 1727
+ },
+ {
+  "round": 7,
+  "name": "Liquidation flush: 4h drop > 2σ with OI −4%, hold 12h",
+  "sharpe": 0.205,
+  "days": 1727
+ },
+ {
+  "round": 7,
+  "name": "Liquidation flush: 4h drop > 2σ with OI −2%, hold 24h",
+  "sharpe": 0.2507,
+  "days": 1727
+ },
+ {
+  "round": 7,
+  "name": "Liquidation flush: 4h drop > 2σ with OI −2%, hold 6h",
+  "sharpe": 0.0446,
+  "days": 1727
+ },
+ {
+  "round": 7,
+  "name": "Liquidation flush: 4h drop > 2σ with OI −2%, hold 12h, both sides",
+  "sharpe": -0.2059,
+  "days": 1727
+ },
+ {
+  "round": 6,
+  "name": "Longs only while stablecoin supply grew over 30 days",
+  "sharpe": 1.8805,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Longs only while stablecoin supply grew > 1% over 30 days",
+  "sharpe": 1.8077,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Skip longs when DVOL is extreme (90-day z > 1.5)",
+  "sharpe": 2.0419,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Skip longs when DVOL is very low (90-day z < −1)",
+  "sharpe": 1.8534,
+  "days": 2592
+ },
+ {
+  "round": 6,
+  "name": "Skip longs when realised vol exceeds implied (DVOL − RV < 0)",
+  "sharpe": 2.0457,
+  "days": 2592
+ },
+ {
+  "round": 7,
+  "name": "Residual momentum: 42-bar residual, hold 42 bars, fee 0.05%",
+  "sharpe": 1.0258,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual momentum: 21-bar residual, hold 42 bars, fee 0.05%",
+  "sharpe": 1.1341,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual momentum: 84-bar residual, hold 42 bars, fee 0.05%",
+  "sharpe": 1.2032,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual momentum: 42-bar residual, hold 18 bars, fee 0.05%",
+  "sharpe": 1.2427,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual momentum: 84-bar residual, hold 84 bars, fee 0.05%",
+  "sharpe": 1.179,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual momentum: 42-bar residual, hold 42 bars, fee 0.02%",
+  "sharpe": 1.0936,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "Residual momentum: 84-bar residual, hold 42 bars, fee 0.02%",
+  "sharpe": 1.2459,
+  "days": 2458
+ },
+ {
+  "round": 7,
+  "name": "GP formulas (seed 11), hold 6 bars, fee 0.05%",
+  "sharpe": -0.0753,
+  "days": 1362
+ },
+ {
+  "round": 7,
+  "name": "GP formulas (seed 11), hold 18 bars, fee 0.02%",
+  "sharpe": 1.1962,
+  "days": 1362
+ },
+ {
+  "round": 7,
+  "name": "GP formulas (seed 23), hold 6 bars, fee 0.05%",
+  "sharpe": -0.2258,
+  "days": 1362
+ },
+ {
+  "round": 7,
+  "name": "GP formulas (seed 23), hold 18 bars, fee 0.02%",
+  "sharpe": 0.7072,
+  "days": 1362
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 32 patterns, top/bottom 4 every 18 bars",
+  "sharpe": -0.0146,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 32 patterns, top/bottom 4 every 6 bars",
+  "sharpe": 0.1225,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 32 patterns, basket rebalanced every 18 bars",
+  "sharpe": 0.41,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 32 patterns, basket rebalanced every 18 bars, fee 0.02%",
+  "sharpe": 0.5606,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 32 patterns, 18-bar target traded daily, fee 0.02%",
+  "sharpe": 0.8622,
+  "days": 2093
+ },
+ {
+  "round": 7,
+  "name": "Pattern library: 24-bar shapes, 32 patterns, 18-bar target traded daily",
+  "sharpe": 0.6424,
+  "days": 2093
  }
 ]
