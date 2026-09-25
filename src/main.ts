@@ -611,7 +611,7 @@ async function triggerAlerts(force = false) {
     alertStatus = `Check failed (${(e as Error).message})`;
   }
   store.set('signal-alert-status', alertStatus);
-  if (mode === 'simple') renderAlerts();
+  renderAlerts();
 }
 setInterval(() => void triggerAlerts(), 30_000);
 
@@ -910,6 +910,14 @@ function setMode(next: Mode, rerun = true) {
 }
 document.querySelectorAll<HTMLButtonElement>('.modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode as Mode)));
 setMode(mode, false);
+// The alerts card doesn't depend on market data: show it straight away.
+renderAlerts();
+$('alertsBtn').addEventListener('click', () => {
+  ui.alerts.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  ui.alerts.classList.remove('flash');
+  void ui.alerts.offsetWidth;
+  ui.alerts.classList.add('flash');
+});
 
 ui.run.addEventListener('click', run);
 ui.symbol.addEventListener('change', run);

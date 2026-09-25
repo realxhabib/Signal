@@ -12,6 +12,7 @@
         <button type="button" data-mode="simple" role="tab">Simple</button>
         <button type="button" data-mode="advanced" role="tab">Advanced</button>
       </div>
+      <button type="button" id="alertsBtn" class="ghost" title="Phone alerts (Telegram / SMS)">🔔 Alerts</button>
       <label>Asset <select id="symbol"></select></label>
       <label>Timeframe <select id="interval"></select></label>
       <label class="adv">Strategy <select id="strategy"></select></label>
@@ -36,9 +37,9 @@
       </section>
       <aside class="panel">
         <div class="card simple" id="simpleStatus"></div>
+        <div class="card" id="alerts"></div>
         <div class="card simple" id="simpleSignals"></div>
         <div class="card simple" id="simpleSizing"></div>
-        <div class="card simple" id="alerts"></div>
         <div class="card simple" id="scanner"></div>
         <div class="card simple" id="momentum"></div>
         <div class="card simple" id="simpleRecord"></div>

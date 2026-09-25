@@ -114,3 +114,8 @@ body.mode-advanced .simple { display: none !important; }
 .mode-banner.bull { background: rgba(38, 166, 154, 0.12); color: var(--long); }
 .mode-banner.bear { background: rgba(239, 83, 80, 0.12); color: var(--short); }
 .mode-banner.neutral { background: rgba(138, 148, 163, 0.12); color: var(--text); }
+
+button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 5px 10px; }
+button.ghost:hover { border-color: var(--accent); }
+@keyframes flash { from { box-shadow: 0 0 0 2px var(--accent); } to { box-shadow: 0 0 0 0 transparent; } }
+.card.flash { animation: flash 1.6s ease-out; }
