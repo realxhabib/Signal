@@ -5,6 +5,7 @@ import { ASSETS } from './data.js';
 import { gradeSignals, type Grade } from './grade.js';
 import { applyBtcGate } from './scan.js';
 import { safeLeverage } from './sizing.js';
+import { etText } from './time.js';
 import type { Candle, Side } from './types.js';
 
 export interface AlertEvent {
@@ -115,7 +116,7 @@ export function formatAlert(e: AlertEvent, priority = false): string {
   return (priority && !e.gold ? '🚨 PRIORITY · ' : '') + formatBody(e);
 }
 
-const utc = (t: number) => new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+const utc = etText;
 
 function formatBody(e: AlertEvent): string {
   const coin = `${e.symbol.replace('USDT', '')} (${ASSETS[e.symbol] ?? e.symbol}) · ${e.interval}`;

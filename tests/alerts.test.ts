@@ -193,7 +193,7 @@ describe('gold alerts', () => {
     expect(text.startsWith('🥇 GOLD LONG SOL')).toBe(true);
     expect(text).toContain('Take profit $206 (+1.5 ATR)');
     expect(text).toContain('stop $188 (3 ATR)');
-    expect(text).toContain('Close by 2023-11-16 06:00 UTC');
+    expect(text).toContain('Close by Nov 16, 1:00 AM ET');
     expect(text).not.toContain('add ½');
   });
 });

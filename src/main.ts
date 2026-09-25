@@ -24,6 +24,7 @@ import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from '.
 import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './quant.js';
 import { STRATEGIES as BASE_STRATEGIES, type StrategyOutput } from './strategies.js';
 import { computeIndicators, defaultStrategy } from './strategy.js';
+import { etDay, etIso, etText, etTick } from './time.js';
 import { goldOutcome, makePlan, type TradePlan } from './plan.js';
 import type { Candle, RiskParams, Signal, Trade } from './types.js';
 import walkforward from './walkforward.json' with { type: 'json' };
@@ -76,7 +77,8 @@ const COLORS = { gold: '#e6b422', long: '#26a69a', short: '#ef5350', veto: '#8a9
 const chartOptions = {
   layout: { background: { type: ColorType.Solid, color: '#0e1117' }, textColor: '#8a94a3' },
   grid: { vertLines: { color: '#1b212a' }, horzLines: { color: '#1b212a' } },
-  timeScale: { timeVisible: true, borderColor: '#262d36' },
+  timeScale: { timeVisible: true, borderColor: '#262d36', tickMarkFormatter: (time: Time) => etTick(time as number) },
+  localization: { timeFormatter: (time: Time) => etText(time as number) },
   rightPriceScale: { borderColor: '#262d36' },
   autoSize: true,
 };
@@ -122,8 +124,7 @@ const money = (v: number) =>
   '$' + v.toLocaleString('en-US', { maximumFractionDigits: v >= 1000 ? 0 : v >= 10 ? 2 : 4, minimumFractionDigits: v >= 1000 ? 0 : 2 });
 const pctText = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 const tradePct = (tr: Trade) => ((tr.side === 'long' ? 1 : -1) * (tr.exitPrice - tr.entryPrice)) / tr.entryPrice * 100;
-const dateText = (s: number) =>
-  new Date(s * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }) + ' UTC';
+const dateText = etText;
 
 function riskParams(): RiskParams {
   const limit = ui.orderType.value === 'limit';
@@ -828,7 +829,7 @@ async function renderMomentum() {
   }
   const row = (x: { symbol: string; ret: number }, cls: string, word: string) =>
     `<li><span class="pill ${cls}">${word}</span><span>${x.symbol.replace('USDT', '')} <span class="muted">${ASSETS[x.symbol]}</span></span><span class="${x.ret >= 0 ? 'long' : 'short'}">${pctText(x.ret * 100)}</span></li>`;
-  const next = new Date((asOf + 7 * 86_400) * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const next = etDay(asOf + 7 * 86_400);
   ui.momentum.innerHTML = `
     <h3>Weekly momentum pair trade (optional)</h3>
     <ul class="signal-list">${p.longs.map((x) => row(x, 'buy', 'LONG')).join('')}${p.shorts.map((x) => row(x, 'sell', 'SHORT')).join('')}</ul>
@@ -914,14 +915,14 @@ function renderAllPlans(interval: string, plans: Map<string, ReturnType<typeof c
     if (p.status === 'opening') return undefined;
     return (((p.side === 'long' ? 1 : -1) * (x.price - p.entry)) / p.entry) * 100;
   };
-  const csv = [['coin', 'status', 'side', 'gold', 'grade', 'opened_utc', 'entry', 'stop', 'stop_now', 'r1', 'r2_add', 'r3', 'gold_tp', 'gold_close_by_utc', 'exit', 'result_pct']];
+  const csv = [['coin', 'status', 'side', 'gold', 'grade', 'opened_et', 'entry', 'stop', 'stop_now', 'r1', 'r2_add', 'r3', 'gold_tp', 'gold_close_by_et', 'exit', 'result_pct']];
   const body = list
     .map(([sym, x]) => {
       const p = x.plan;
       const coin = `<td><b>${sym.replace('USDT', '')}</b> <span class="muted">${ASSETS[sym]}</span></td>`;
       if (!p) return `<tr>${coin}<td class="muted" colspan="11">no trades in the loaded history</td></tr>`;
       const pct = livePct(x);
-      const iso = (s: number) => new Date(s * 1000).toISOString().slice(0, 16).replace('T', ' ');
+      const iso = etIso;
       csv.push([
         sym, statusText(x), p.side, p.gold ? 'yes' : '', p.grade ?? '', iso(p.entryTime), String(p.entry), String(p.stop), String(p.stopNow), String(p.r1), String(p.r2), String(p.r3),
         p.goldTp ? String(p.goldTp) : '', p.closeBy ? iso(p.closeBy) : '', p.exit !== undefined ? String(p.exit) : '', pct !== undefined ? pct.toFixed(2) : '',
@@ -1010,7 +1011,7 @@ function renderTrades(trades: Trade[]) {
     recent
       .map(
         (tr) =>
-          `<tr><td>${new Date(tr.entryTime * 1000).toISOString().slice(5, 16).replace('T', ' ')}</td>` +
+          `<tr><td>${etText(tr.entryTime)}</td>` +
           `<td class="${tr.side}">${tr.side}</td><td class="muted">${tr.exitReason}</td>` +
           `<td class="${tr.pnl > 0 ? 'long' : 'short'}">${tr.rMultiple.toFixed(2)}</td></tr>`,
       )
@@ -1031,7 +1032,7 @@ function renderLatest(candidates: Signal[], approved: Signal[], jevOn: boolean) 
   ui.latest.innerHTML = `
     <h3>Latest signal</h3>
     <div class="signal-side ${last.side}">${last.side === 'long' ? 'LONG' : 'SHORT'}</div>
-    <div class="muted">${new Date(last.time * 1000).toUTCString()} · ${barsAgo} bar${barsAgo === 1 ? '' : 's'} ago</div>
+    <div class="muted">${etText(last.time)} · ${barsAgo} bar${barsAgo === 1 ? '' : 's'} ago</div>
     <ul class="reasons">${last.reasons.map((r) => `<li>${r}</li>`).join('')}</ul>
     ${
       jevOn && v
