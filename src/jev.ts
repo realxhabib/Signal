@@ -1,6 +1,6 @@
-import { questions } from '../api/jev';
-import type { IndicatorSet } from './strategy';
-import type { Candle, Side, Signal } from './types';
+import { questions } from '../api/jev.js';
+import type { IndicatorSet } from './strategy.js';
+import type { Candle, Side, Signal } from './types.js';
 
 /**
  * Jev (TypeSafe AI's System One model) is used as a judge on top of the

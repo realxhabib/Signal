@@ -1,8 +1,8 @@
-import { computeFeatures, moonAge, moonPhase } from './features';
-import { ema } from './indicators';
-import quantRules from './quantRules.json';
-import type { StrategyDef } from './strategies';
-import type { Candle, Side, Signal } from './types';
+import { computeFeatures, moonAge, moonPhase } from './features.js';
+import { ema } from './indicators.js';
+import quantRules from './quantRules.json' with { type: 'json' };
+import type { StrategyDef } from './strategies.js';
+import type { Candle, Side, Signal } from './types.js';
 
 interface RuleSet {
   profile: { sl: number; tp: number; hold: number };

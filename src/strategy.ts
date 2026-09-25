@@ -1,5 +1,5 @@
-import { adx, atr, ema, jma, macd, rsi, sma } from './indicators';
-import type { Candle, Signal, StrategyParams } from './types';
+import { adx, atr, ema, jma, macd, rsi, sma } from './indicators.js';
+import type { Candle, Signal, StrategyParams } from './types.js';
 
 export const defaultStrategy: StrategyParams = {
   jmaFastLen: 9,

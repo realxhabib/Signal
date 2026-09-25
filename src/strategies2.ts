@@ -1,10 +1,10 @@
 // Classic indicators as trading rules, for the indicator tournament (research/indicators.ts).
 // Every rule is evaluated on closed bars only; shorts mirror longs when `shorts` is 1.
-import type { ExitRules } from './backtest';
-import { atr, bollinger, highest, lowest, macd } from './indicators';
-import { aroon, cci, heikinAshi, hma, ichimoku, kama, keltner, psar, rollingVwap, stochRsi, zigzag } from './indicators2';
-import { cols, trendRegime, type Params, type StrategyDef, type StrategyOutput } from './strategies';
-import type { Candle, Signal } from './types';
+import type { ExitRules } from './backtest.js';
+import { atr, bollinger, highest, lowest, macd } from './indicators.js';
+import { aroon, cci, heikinAshi, hma, ichimoku, kama, keltner, psar, rollingVwap, stochRsi, zigzag } from './indicators2.js';
+import { cols, trendRegime, type Params, type StrategyDef, type StrategyOutput } from './strategies.js';
+import type { Candle, Signal } from './types.js';
 
 type Bool = (i: number) => boolean;
 

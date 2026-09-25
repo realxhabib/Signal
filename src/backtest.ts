@@ -1,4 +1,4 @@
-import type { Candle, RiskParams, Signal, Trade } from './types';
+import type { Candle, RiskParams, Signal, Trade } from './types.js';
 
 export const defaultRisk: RiskParams = {
   leverage: 5,

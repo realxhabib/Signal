@@ -1,6 +1,6 @@
-import { backtest, defaultRisk } from './backtest';
-import { computeFeatures } from './features';
-import { ema } from './indicators';
+import { backtest, defaultRisk } from './backtest.js';
+import { computeFeatures } from './features.js';
+import { ema } from './indicators.js';
 import {
   bandReversion,
   jmaConfluence,
@@ -9,9 +9,9 @@ import {
   stackedPullback,
   supertrendTrend,
   type StrategyDef,
-} from './strategies';
-import { NEW_STRATEGIES } from './strategies2';
-import type { Candle, Signal } from './types';
+} from './strategies.js';
+import { NEW_STRATEGIES } from './strategies2.js';
+import type { Candle, Signal } from './types.js';
 
 /**
  * Strategies that can vote in the composite (bit k of `mask` enables COMPONENTS[k]). The first six are the

@@ -1,7 +1,7 @@
-import type { ExitRules } from './backtest';
-import { atr, bollinger, ema, higherTimeframe, rsi, sma, supertrend } from './indicators';
-import { computeIndicators, defaultStrategy, generateSignals } from './strategy';
-import type { Candle, RiskParams, Side, Signal } from './types';
+import type { ExitRules } from './backtest.js';
+import { atr, bollinger, ema, higherTimeframe, rsi, sma, supertrend } from './indicators.js';
+import { computeIndicators, defaultStrategy, generateSignals } from './strategy.js';
+import type { Candle, RiskParams, Side, Signal } from './types.js';
 
 export interface StrategyOutput {
   signals: Signal[];

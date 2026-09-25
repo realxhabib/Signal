@@ -1,8 +1,8 @@
 // Causal feature engine: every value at bar i uses only bars <= i.
 // Features are discretised into named conditions ("rsi2<10", "moon:full", ...)
 // so they can be mined for high-win-rate combinations and explained on the chart.
-import { atr, bollinger, ema, higherTimeframe, rsi, sma, supertrend } from './indicators';
-import type { Candle } from './types';
+import { atr, bollinger, ema, higherTimeframe, rsi, sma, supertrend } from './indicators.js';
+import type { Candle } from './types.js';
 
 const SYNODIC_DAYS = 29.530588853;
 const KNOWN_NEW_MOON = Date.UTC(2000, 0, 6, 18, 14) / 1000;

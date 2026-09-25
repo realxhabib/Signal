@@ -1,4 +1,4 @@
-import type { Candle } from './types';
+import type { Candle } from './types.js';
 
 // Binance public market-data mirrors (no key, works where api.binance.com is geo-blocked).
 const REST = 'https://data-api.binance.vision/api/v3/klines';

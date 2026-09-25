@@ -1,7 +1,7 @@
-import { COMPONENTS, votes } from './composite';
-import { computeFeatures } from './features';
-import model from './signalModel.json';
-import type { Candle, Signal } from './types';
+import { COMPONENTS, votes } from './composite.js';
+import { computeFeatures } from './features.js';
+import model from './signalModel.json' with { type: 'json' };
+import type { Candle, Signal } from './types.js';
 
 export type Grade = 'A' | 'B' | 'C';
 

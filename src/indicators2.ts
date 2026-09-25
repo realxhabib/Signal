@@ -1,5 +1,5 @@
 // Additional classic indicators for the indicator tournament. All causal: bar i uses bars <= i only.
-import { atr, ema, rsi, sma, stdev } from './indicators';
+import { atr, ema, rsi, sma, stdev } from './indicators.js';
 
 export function wma(src: number[], len: number): number[] {
   const den = (len * (len + 1)) / 2;

@@ -1,7 +1,7 @@
-import { backtest, defaultRisk } from './backtest';
-import { ALLOCATION, composite, LEVELS, lineupFor, modeOf } from './composite';
-import { computeFeatures } from './features';
-import type { Candle, Signal, Trade } from './types';
+import { backtest, defaultRisk } from './backtest.js';
+import { ALLOCATION, composite, LEVELS, lineupFor, modeOf } from './composite.js';
+import { computeFeatures } from './features.js';
+import type { Candle, Signal, Trade } from './types.js';
 
 /** Bitcoin's trend regime by bar time (1 bull, -1 bear, 0 neutral). */
 export function btcRegimeByTime(btc: Candle[]): Map<number, number> {

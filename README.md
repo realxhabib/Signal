@@ -167,6 +167,30 @@ and open-interest / long-short metrics (from Dec 2021; `research/futures.ts`, fr
 Remaining caveats: prices are spot (not perp) candles; limit orders are assumed to fill; the universe is today's top
 coins (survivorship bias); results lean on the 2020–21 and 2023–25 bull markets.
 
+## Alerts (Telegram / SMS)
+
+No cron or scheduler: **while the app is open** (keep a tab open on a computer; phones pause background tabs), it
+asks the server one minute after every hourly candle close to check all 20 coins on 4h and 1h. The server
+(`api/alerts.ts`, logic in `src/alerts.ts` + `server/alertsRun.ts`) sends each new event:
+
+- 🟢/🔴 **OPEN LONG / OPEN SHORT**: price, stop, add level (+2R), grade, risk multiple, max safe leverage, market mode
+- ⚪ **CLOSE**: price and result
+- ➕ **ADD ½**: pyramid level hit; move the stop to entry
+
+Setup in Vercel → Settings → Environment Variables, then redeploy and press **Send test** in the Alerts card:
+
+1. **Telegram (free):** message **@BotFather** → `/newbot` → copy the token into `TELEGRAM_BOT_TOKEN`. Send your
+   new bot any message, open `https://api.telegram.org/bot<TOKEN>/getUpdates`, and copy `"chat":{"id":…}` into
+   `TELEGRAM_CHAT_ID`.
+2. **SMS (Twilio, paid per message):** `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` (your Twilio
+   number) and `ALERT_PHONE` (your phone, e.g. `+15551234567`).
+3. Optional: `NTFY_TOPIC` (ntfy.sh push app) or `DISCORD_WEBHOOK_URL`.
+
+The endpoint only ever sends events it computes itself (never caller-supplied text), and repeats within the same
+candle are suppressed. Set `ALERTS_KEY` if you want to lock it down (then enter the key via
+`localStorage.setItem('signal-alerts-key', '…')` in the browser console). Browser pop-up notifications can also be
+turned on from the same card. Every alert matches the trade the backtest takes (tested in `tests/alerts.test.ts`).
+
 ## Run it
 
 ```bash

@@ -1,4 +1,4 @@
-import type { Candle } from './types';
+import type { Candle } from './types.js';
 
 /**
  * Market-neutral momentum sleeve (research/sleeves.ts, RESULTS-round5.md): once a week, long the 4 coins

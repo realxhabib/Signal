@@ -11,20 +11,21 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import './styles.css';
-import { backtest, defaultRisk, summarize, type BacktestResult, type Stats } from './backtest';
-import { ALLOCATION, composite, LEVELS, lineupFor, modeOf, SPLIT, type MarketMode } from './composite';
-import { GRADE_SIZE, gradeSignals, type Grade } from './grade';
-import portfolioStats from './portfolioStats.json';
-import { alignRegime, applyBtcGate, btcRegimeByTime, coinStatus, type CoinStatus } from './scan';
-import { lastMonday, MOMENTUM, momentumPicks } from './momentum';
-import { safeLeverage } from './sizing';
-import { ASSETS, INTERVALS, loadCandles, streamCandles, type Interval } from './data';
-import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from './jev';
-import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './quant';
-import { STRATEGIES as BASE_STRATEGIES, type StrategyOutput } from './strategies';
-import { computeIndicators, defaultStrategy } from './strategy';
-import type { Candle, RiskParams, Signal, Trade } from './types';
-import walkforward from './walkforward.json';
+import { backtest, defaultRisk, summarize, type BacktestResult, type Stats } from './backtest.js';
+import { ALLOCATION, composite, LEVELS, lineupFor, modeOf, SPLIT, type MarketMode } from './composite.js';
+import { GRADE_SIZE, gradeSignals, type Grade } from './grade.js';
+import portfolioStats from './portfolioStats.json' with { type: 'json' };
+import { alignRegime, applyBtcGate, btcRegimeByTime, coinStatus, type CoinStatus } from './scan.js';
+import { lastMonday, MOMENTUM, momentumPicks } from './momentum.js';
+import { safeLeverage } from './sizing.js';
+import { formatAlert, latestEvents } from './alerts.js';
+import { ASSETS, INTERVALS, loadCandles, streamCandles, type Interval } from './data.js';
+import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from './jev.js';
+import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './quant.js';
+import { STRATEGIES as BASE_STRATEGIES, type StrategyOutput } from './strategies.js';
+import { computeIndicators, defaultStrategy } from './strategy.js';
+import type { Candle, RiskParams, Signal, Trade } from './types.js';
+import walkforward from './walkforward.json' with { type: 'json' };
 
 const STRATEGIES = [composite, ...BASE_STRATEGIES, quantStrategy];
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -50,6 +51,7 @@ const ui = {
   scanner: $<HTMLDivElement>('scanner'),
   allowShorts: $<HTMLInputElement>('allowShorts'),
   momentum: $<HTMLDivElement>('momentum'),
+  alerts: $<HTMLDivElement>('alerts'),
 };
 
 type Mode = 'simple' | 'advanced';
@@ -556,6 +558,99 @@ async function regimeFor(interval: string, times: number[], sameIntervalBtc: Can
   return btcRegimeByTime(sameIntervalBtc ?? (await loadCandles('BTCUSDT', interval as Interval)).slice(0, -1));
 }
 
+// ---- Alerts ------------------------------------------------------------------------------
+const notified = new Set<string>();
+function notifyLatest(symbol: string, interval: string) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  for (const e of latestEvents(candles, symbol, interval, btcRegime)) {
+    const key = `${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`;
+    if (notified.has(key)) continue;
+    notified.add(key);
+    const [title, ...body] = formatAlert(e).split('\n');
+    try {
+      new Notification(title, { body: body.join('\n'), tag: key });
+    } catch {
+      /* some mobile browsers only allow notifications from a service worker */
+    }
+  }
+}
+
+const store = {
+  get: (k: string) => {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return null;
+    }
+  },
+  set: (k: string, v: string) => {
+    try {
+      localStorage.setItem(k, v);
+    } catch {
+      /* ignore */
+    }
+  },
+};
+let alertStatus = store.get('signal-alert-status') ?? 'No check yet';
+
+/** Ask the server to check every coin and send phone alerts, once per hourly candle close. */
+async function triggerAlerts(force = false) {
+  const now = Date.now() / 1000;
+  const hour = Math.floor(now / 3600);
+  const into = now - hour * 3600;
+  if (!force && (into < 60 || into > 1200 || store.get('signal-alert-hour') === String(hour))) return;
+  store.set('signal-alert-hour', String(hour));
+  const key = store.get('signal-alerts-key');
+  try {
+    const r = await fetch(`/api/alerts${key ? `?key=${encodeURIComponent(key)}` : ''}`);
+    const j = await r.json();
+    alertStatus = r.ok
+      ? `Checked ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: ${j.events.length} signal${j.events.length === 1 ? '' : 's'}, ${j.sent.length} message${j.sent.length === 1 ? '' : 's'} sent${j.channels.length ? '' : ' (no channel configured)'}`
+      : `Check failed (${r.status}${j.error ? `: ${j.error}` : ''})`;
+  } catch (e) {
+    alertStatus = `Check failed (${(e as Error).message})`;
+  }
+  store.set('signal-alert-status', alertStatus);
+  if (mode === 'simple') renderAlerts();
+}
+setInterval(() => void triggerAlerts(), 30_000);
+
+function renderAlerts() {
+  const supported = 'Notification' in window;
+  const perm = supported ? Notification.permission : 'unsupported';
+  ui.alerts.innerHTML = `
+    <h3>Alerts</h3>
+    <dl class="kv">
+      <dt>Phone (Telegram / SMS)</dt><dd><button id="testAlert">Send test</button></dd>
+      <dt>Last check</dt><dd class="muted">${alertStatus}</dd>
+      <dt>Browser pop-ups</dt><dd>${
+        perm === 'granted'
+          ? '<span class="long">On</span>'
+          : perm === 'denied'
+            ? '<span class="short">Blocked</span>'
+            : perm === 'unsupported'
+              ? '<span class="muted">Not supported</span>'
+              : '<button id="enableNotify">Turn on</button>'
+      }</dd>
+    </dl>
+    <p class="note">While this page is open, it checks all ${Object.keys(ASSETS).length} coins on 4h and 1h a minute after every hourly candle close and sends OPEN LONG / OPEN SHORT (with stop, add level, grade and safe leverage), CLOSE and ADD ½ to your phone. Keep it open on a computer (phones pause background tabs). Setup: add <b>TELEGRAM_BOT_TOKEN</b> + <b>TELEGRAM_CHAT_ID</b> (free) and/or Twilio SMS variables in Vercel → Settings → Environment Variables, redeploy, then press Send test.</p>`;
+  $('enableNotify')?.addEventListener('click', async () => {
+    await Notification.requestPermission();
+    renderAlerts();
+  });
+  $('testAlert')?.addEventListener('click', async () => {
+    const key = store.get('signal-alerts-key');
+    try {
+      const r = await fetch(`/api/alerts?test=1${key ? `&key=${encodeURIComponent(key)}` : ''}`);
+      const j = await r.json();
+      alertStatus = r.ok ? (j.channels.length ? `Test: ${j.results.join(', ')}` : 'No channel configured yet (see setup below)') : `Test failed (${r.status})`;
+    } catch (e) {
+      alertStatus = `Test failed (${(e as Error).message})`;
+    }
+    renderAlerts();
+  });
+}
+
 let momentumFor = -1;
 async function renderMomentum() {
   const asOf = lastMonday(Date.now() / 1000);
@@ -761,6 +856,7 @@ async function run() {
     if (mode === 'simple' && scannedInterval !== interval) {
       scannedInterval = interval;
       void renderScanner().then(renderMomentum);
+      renderAlerts();
     }
     const span = mode === 'simple' ? 120 : 200;
     chart.timeScale().setVisibleLogicalRange({ from: candles.length - span, to: candles.length + 5 });
@@ -778,6 +874,7 @@ async function run() {
           } else btcCandles = candles;
           btcRegime = await regimeFor(interval, candles.map((b) => b.time), btcCandles).catch(() => btcRegimeByTime(btcCandles));
           await analyze(id);
+          if (id === runId) notifyLatest(symbol, interval);
           if (mode === 'simple') void renderScanner();
         };
         void refresh();
