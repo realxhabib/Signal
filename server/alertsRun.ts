@@ -138,6 +138,20 @@ export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env;
   };
 }
 
+/**
+ * Who may call the alerts endpoint. Vercel Cron sends `Authorization: Bearer $CRON_SECRET` when CRON_SECRET is
+ * set; manual calls (the app's Send test button) may pass ?key= with CRON_SECRET or ALERTS_KEY. With neither set, the
+ * endpoint is open (it only ever sends events it computes itself).
+ */
+export function isAuthorized(authHeader: string | null, key: string | null, env: Env): boolean {
+  const cron = env.CRON_SECRET;
+  const manual = env.ALERTS_KEY;
+  if (!cron && !manual) return true;
+  if (cron && authHeader === `Bearer ${cron}`) return true;
+  // Manual calls may use either secret as ?key=.
+  return !!key && (key === manual || key === cron);
+}
+
 export async function sendTest(env: Env = process.env) {
   const chs = channels(env);
   const results: string[] = [];

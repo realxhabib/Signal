@@ -134,3 +134,19 @@ describe('per-coin alert priority', () => {
     expect(formatAlert(e).startsWith('🚨')).toBe(false);
   });
 });
+
+import { isAuthorized } from '../server/alertsRun';
+
+describe('alerts endpoint access', () => {
+  it('is open when no secret is configured', () => {
+    expect(isAuthorized(null, null, {})).toBe(true);
+  });
+  it('accepts Vercel Cron’s bearer secret and manual ?key=', () => {
+    const env = { CRON_SECRET: 'cron-s3cret' };
+    expect(isAuthorized('Bearer cron-s3cret', null, env)).toBe(true);
+    expect(isAuthorized(null, 'cron-s3cret', env)).toBe(true);
+    expect(isAuthorized('Bearer nope', null, env)).toBe(false);
+    expect(isAuthorized(null, null, env)).toBe(false);
+    expect(isAuthorized(null, 'k', { CRON_SECRET: 'c', ALERTS_KEY: 'k' })).toBe(true);
+  });
+});

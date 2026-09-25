@@ -124,3 +124,5 @@ button.ghost:hover { border-color: var(--accent); }
 .lvl { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 3px 8px; font-size: 12px; border-radius: 12px; }
 .lvl.priority { background: rgba(245, 166, 35, 0.18); border-color: #f5a623; color: #f5a623; font-weight: 700; }
 .lvl.off { color: var(--muted); text-decoration: line-through; opacity: 0.6; }
+
+pre.env { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px; font-size: 11px; white-space: pre-wrap; word-break: break-all; margin: 6px 0; }

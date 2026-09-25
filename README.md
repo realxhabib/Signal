@@ -169,22 +169,25 @@ coins (survivorship bias); results lean on the 2020–21 and 2023–25 bull mark
 
 ## Alerts (Telegram / SMS)
 
-No cron or scheduler: **while the app is open** (keep a tab open on a computer; phones pause background tabs), it
-asks the server one minute after every hourly candle close to check all 20 coins on 4h and 1h. The server
-(`api/alerts.ts`, logic in `src/alerts.ts` + `server/alertsRun.ts`) sends each new event:
+**Vercel Cron** (`vercel.json`) calls `api/alerts.ts` at minute :01 of every hour, so alerts arrive with no browser
+open. Each run checks all 20 coins on 4h and 1h for candles that just closed (logic in `src/alerts.ts` +
+`server/alertsRun.ts`, identical to the chart) and sends each new event:
 
 - 🟢/🔴 **OPEN LONG / OPEN SHORT**: price, stop, add level (+2R), grade, risk multiple, max safe leverage, market mode
 - ⚪ **CLOSE**: price and result
 - ➕ **ADD ½**: pyramid level hit; move the stop to entry
 
-Setup in Vercel → Settings → Environment Variables, then redeploy and press **Send test** in the Alerts card:
+Hourly cron jobs need the Vercel **Pro** plan (Hobby is limited to once a day). Setup in Vercel → Settings →
+Environment Variables, then redeploy and press **Send test** in the 🔔 Alerts card:
 
-1. **Telegram (free):** message **@BotFather** → `/newbot` → copy the token into `TELEGRAM_BOT_TOKEN`. Send your
+1. **`CRON_SECRET`**: any long random string. Vercel Cron sends it automatically; it stops anyone else triggering
+   the endpoint. The app's Send test asks for it once.
+2. **Telegram (free):** message **@BotFather** → `/newbot` → copy the token into `TELEGRAM_BOT_TOKEN`. Send your
    new bot any message, open `https://api.telegram.org/bot<TOKEN>/getUpdates`, and copy `"chat":{"id":…}` into
    `TELEGRAM_CHAT_ID`.
-2. **SMS (Twilio, paid per message):** `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` (your Twilio
-   number) and `ALERT_PHONE` (your phone, e.g. `+15551234567`).
-3. Optional: `NTFY_TOPIC` (ntfy.sh push app) or `DISCORD_WEBHOOK_URL`.
+3. **SMS (Twilio, paid per message, priority coins only):** `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
+   `TWILIO_FROM` and `ALERT_PHONE` (e.g. `+15551234567`).
+4. Optional: `NTFY_TOPIC` (ntfy.sh push app) or `DISCORD_WEBHOOK_URL`.
 
 **Priority coins.** In the Alerts card, tap a coin to cycle **Normal → 🚨 Priority → Off**:
 
@@ -194,13 +197,11 @@ Setup in Vercel → Settings → Environment Variables, then redeploy and press 
 | Normal (default) | arrives silently | not sent | normal |
 | Off | not sent | not sent | not sent |
 
-Choices are saved in the browser and sent with each check. Server-side defaults: `ALERT_PRIORITY=BTCUSDT,ETHUSDT`
-and `ALERT_OFF=…` (the app's choices override them).
+The hourly check runs on the server, so levels live in `ALERT_PRIORITY=BTCUSDT,ETHUSDT` and `ALERT_OFF=…`; the
+Alerts card writes these lines for you (tap coins, press Copy, paste into Vercel, redeploy).
 
 The endpoint only ever sends events it computes itself (never caller-supplied text), and repeats within the same
-candle are suppressed. Set `ALERTS_KEY` if you want to lock it down (then enter the key via
-`localStorage.setItem('signal-alerts-key', '…')` in the browser console). Browser pop-up notifications can also be
-turned on from the same card. Every alert matches the trade the backtest takes (tested in `tests/alerts.test.ts`).
+candle are suppressed. Browser pop-up notifications for the chart you're viewing can also be turned on from the card. Every alert matches the trade the backtest takes (tested in `tests/alerts.test.ts`).
 
 ## Run it
 

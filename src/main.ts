@@ -593,7 +593,7 @@ const store = {
     }
   },
 };
-let alertStatus = store.get('signal-alert-status') ?? 'No check yet';
+let alertStatus = 'Server checks every hour at :01';
 let alertLevels: Record<string, AlertLevel> = {};
 try {
   alertLevels = JSON.parse(store.get('signal-alert-levels') ?? '{}');
@@ -608,35 +608,20 @@ const alertQuery = (extra: string[] = []) => {
   return q.length ? `?${q.join('&')}` : '';
 };
 
-/** Ask the server to check every coin and send phone alerts, once per hourly candle close. */
-async function triggerAlerts(force = false) {
-  const now = Date.now() / 1000;
-  const hour = Math.floor(now / 3600);
-  const into = now - hour * 3600;
-  if (!force && (into < 60 || into > 1200 || store.get('signal-alert-hour') === String(hour))) return;
-  store.set('signal-alert-hour', String(hour));
-  try {
-    const r = await fetch(`/api/alerts${alertQuery()}`);
-    const j = await r.json();
-    alertStatus = r.ok
-      ? `Checked ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: ${j.events.length} signal${j.events.length === 1 ? '' : 's'}, ${j.sent.length} message${j.sent.length === 1 ? '' : 's'} sent${j.channels.length ? '' : ' (no channel configured)'}`
-      : `Check failed (${r.status}${j.error ? `: ${j.error}` : ''})`;
-  } catch (e) {
-    alertStatus = `Check failed (${(e as Error).message})`;
-  }
-  store.set('signal-alert-status', alertStatus);
-  renderAlerts();
-}
-setInterval(() => void triggerAlerts(), 30_000);
+
 
 function renderAlerts() {
   const supported = 'Notification' in window;
   const perm = supported ? Notification.permission : 'unsupported';
+  const pri = Object.keys(ASSETS).filter((s) => levelOf(s) === 'priority');
+  const off = Object.keys(ASSETS).filter((s) => levelOf(s) === 'off');
+  const envLines = [`ALERT_PRIORITY=${pri.join(',')}`, `ALERT_OFF=${off.join(',')}`].join('\n');
+  const locked = alertStatus.startsWith('Locked');
   ui.alerts.innerHTML = `
     <h3>Alerts</h3>
     <dl class="kv">
       <dt>Phone (Telegram / SMS)</dt><dd><button id="testAlert">Send test</button></dd>
-      <dt>Last check</dt><dd class="muted">${alertStatus}</dd>
+      <dt>Status</dt><dd class="muted">${alertStatus}</dd>
       <dt>Browser pop-ups</dt><dd>${
         perm === 'granted'
           ? '<span class="long">On</span>'
@@ -647,14 +632,17 @@ function renderAlerts() {
               : '<button id="enableNotify">Turn on</button>'
       }</dd>
     </dl>
+    ${locked ? `<label class="field" style="margin-top:8px">Key <input id="alertKey" type="password" placeholder="CRON_SECRET or ALERTS_KEY" /></label>` : ''}
     <div class="levels">${Object.keys(ASSETS)
       .map((s) => {
         const l = levelOf(s);
         return `<button type="button" class="lvl ${l}" data-sym="${s}" title="${ASSETS[s]}: ${l} (tap to change)">${l === 'priority' ? '🚨 ' : ''}${s.replace('USDT', '')}</button>`;
       })
       .join('')}</div>
-    <p class="note"><b>Tap a coin</b> to cycle Normal → 🚨 Priority → Off. Priority coins ring on Telegram, get SMS (if set up) and urgent pushes; normal coins arrive silently; off coins aren't sent.</p>
-    <p class="note">While this page is open, it checks all ${Object.keys(ASSETS).length} coins on 4h and 1h a minute after every hourly candle close and sends OPEN LONG / OPEN SHORT (with stop, add level, grade and safe leverage), CLOSE and ADD ½ to your phone. Keep it open on a computer (phones pause background tabs). Setup: add <b>TELEGRAM_BOT_TOKEN</b> + <b>TELEGRAM_CHAT_ID</b> (free) and/or Twilio SMS variables in Vercel → Settings → Environment Variables, redeploy, then press Send test.</p>`;
+    <p class="note"><b>Tap a coin</b> to cycle Normal → 🚨 Priority → Off, then copy these lines into Vercel → Settings → Environment Variables and redeploy (the hourly check runs on the server, so it reads its settings there):</p>
+    <pre class="env">${envLines}</pre>
+    <button type="button" id="copyEnv" class="ghost">Copy</button>
+    <p class="note">The server checks all ${Object.keys(ASSETS).length} coins on 4h and 1h every hour at :01 (Vercel Cron) — no browser needed — and sends OPEN LONG / OPEN SHORT (with stop, add level, grade and safe leverage), CLOSE and ADD ½. Priority coins ring on Telegram and get SMS; normal coins arrive silently; off coins aren't sent. Setup: <b>TELEGRAM_BOT_TOKEN</b> + <b>TELEGRAM_CHAT_ID</b> (and/or Twilio SMS), plus <b>CRON_SECRET</b> (any long random string). Redeploy, then press Send test.</p>`;
   ui.alerts.querySelectorAll<HTMLButtonElement>('button.lvl').forEach((b) =>
     b.addEventListener('click', () => {
       const s = b.dataset.sym!;
@@ -665,6 +653,19 @@ function renderAlerts() {
       renderAlerts();
     }),
   );
+  $('copyEnv')?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(envLines);
+      $('copyEnv').textContent = 'Copied';
+    } catch {
+      $('copyEnv').textContent = 'Select and copy above';
+    }
+  });
+  $('alertKey')?.addEventListener('change', (e) => {
+    store.set('signal-alerts-key', (e.target as HTMLInputElement).value.trim());
+    alertStatus = 'Key saved — press Send test';
+    renderAlerts();
+  });
   $('enableNotify')?.addEventListener('click', async () => {
     await Notification.requestPermission();
     renderAlerts();
@@ -673,7 +674,14 @@ function renderAlerts() {
     try {
       const r = await fetch(`/api/alerts${alertQuery(['test=1'])}`);
       const j = await r.json();
-      alertStatus = r.ok ? (j.channels.length ? `Test: ${j.results.join(', ')}` : 'No channel configured yet (see setup below)') : `Test failed (${r.status})`;
+      alertStatus =
+        r.status === 401
+          ? 'Locked: enter your CRON_SECRET below'
+          : r.ok
+            ? j.channels.length
+              ? `Test: ${j.results.join(', ')}`
+              : 'No channel configured yet (see setup below)'
+            : `Test failed (${r.status})`;
     } catch (e) {
       alertStatus = `Test failed (${(e as Error).message})`;
     }
