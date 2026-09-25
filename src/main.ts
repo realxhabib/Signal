@@ -15,7 +15,7 @@ import { backtest, defaultRisk, summarize, type BacktestResult, type Stats } fro
 import { ALLOCATION, composite, GOLD, isGold, LEVELS, lineupFor, modeOf, SPLIT, type MarketMode } from './composite.js';
 import { GRADE_SIZE, gradeSignals, type Grade } from './grade.js';
 import portfolioStats from './portfolioStats.json' with { type: 'json' };
-import { alignRegime, applyBtcGate, btcRegimeByTime, coinStatus, type CoinStatus } from './scan.js';
+import { alignRegime, applyBtcGate, btcRegimeByTime, coinPlan, type CoinStatus } from './scan.js';
 import { lastMonday, MOMENTUM, momentumPicks } from './momentum.js';
 import { safeLeverage } from './sizing.js';
 import { formatAlert, latestEvents, levelsToSpec, type AlertLevel } from './alerts.js';
@@ -48,6 +48,7 @@ const ui = {
   simpleStatus: $<HTMLDivElement>('simpleStatus'),
   simpleSignals: $<HTMLDivElement>('simpleSignals'),
   planTable: $<HTMLDivElement>('planTable'),
+  allPlans: $<HTMLDivElement>('allPlans'),
   simpleRecord: $<HTMLDivElement>('simpleRecord'),
   simpleSizing: $<HTMLDivElement>('simpleSizing'),
   scanner: $<HTMLDivElement>('scanner'),
@@ -840,7 +841,9 @@ async function renderScanner() {
   const id = ++scanId;
   const interval = ui.interval.value as Interval;
   const rows = new Map<string, CoinStatus | 'loading' | 'error'>(Object.keys(ASSETS).map((s) => [s, 'loading']));
+  const plans = new Map<string, ReturnType<typeof coinPlan>>();
   const draw = () => {
+    renderAllPlans(interval, plans, rows.size - plans.size);
     const order = { 'open-now': 0, 'close-now': 1, 'in-trade': 2, flat: 3 } as const;
     const list = [...rows.entries()].sort(([, a], [, b]) => (typeof a === 'string' ? 9 : order[a.kind]) - (typeof b === 'string' ? 9 : order[b.kind]));
     ui.scanner.innerHTML = `
@@ -885,7 +888,9 @@ async function renderScanner() {
           const c = (await loadCandles(sym, interval, 1000).catch(() => loadCandles(sym, interval, 1000))).slice(0, -1);
           if (id !== scanId) return;
           const btc = btc4 ? alignRegime(c.map((b) => b.time), SEC[interval], btc4, SEC['4h']) : btcSame;
-          rows.set(sym, coinStatus(c, sym, btc, true, interval));
+          const cp = coinPlan(c, sym, btc, interval);
+          plans.set(sym, cp);
+          rows.set(sym, cp.status);
         } catch {
           rows.set(sym, 'error');
         }
@@ -893,6 +898,69 @@ async function renderScanner() {
       }
     }),
   );
+}
+
+let allPlansCsv = '';
+/** One row per coin: the signal opening now, the open trade, or the last closed trade, with its levels. */
+function renderAllPlans(interval: string, plans: Map<string, ReturnType<typeof coinPlan>>, loading: number) {
+  const rank = (x: ReturnType<typeof coinPlan>) =>
+    x.status.kind === 'open-now' ? 0 : x.status.kind === 'close-now' ? 1 : x.status.kind === 'in-trade' ? 2 : 3;
+  const list = [...plans.entries()].sort(([a, x], [b, y]) => rank(x) - rank(y) || a.localeCompare(b));
+  const statusText = (x: ReturnType<typeof coinPlan>) =>
+    x.status.kind === 'open-now' ? 'OPEN NOW' : x.status.kind === 'close-now' ? 'CLOSE NOW' : x.status.kind === 'in-trade' ? 'IN TRADE' : 'NO TRADE (last trade)';
+  const livePct = (x: ReturnType<typeof coinPlan>) => {
+    const p = x.plan!;
+    if (p.status === 'closed') return p.resultPct!;
+    if (p.status === 'opening') return undefined;
+    return (((p.side === 'long' ? 1 : -1) * (x.price - p.entry)) / p.entry) * 100;
+  };
+  const csv = [['coin', 'status', 'side', 'gold', 'grade', 'opened_utc', 'entry', 'stop', 'stop_now', 'r1', 'r2_add', 'r3', 'gold_tp', 'gold_close_by_utc', 'exit', 'result_pct']];
+  const body = list
+    .map(([sym, x]) => {
+      const p = x.plan;
+      const coin = `<td><b>${sym.replace('USDT', '')}</b> <span class="muted">${ASSETS[sym]}</span></td>`;
+      if (!p) return `<tr>${coin}<td class="muted" colspan="11">no trades in the loaded history</td></tr>`;
+      const pct = livePct(x);
+      const iso = (s: number) => new Date(s * 1000).toISOString().slice(0, 16).replace('T', ' ');
+      csv.push([
+        sym, statusText(x), p.side, p.gold ? 'yes' : '', p.grade ?? '', iso(p.entryTime), String(p.entry), String(p.stop), String(p.stopNow), String(p.r1), String(p.r2), String(p.r3),
+        p.goldTp ? String(p.goldTp) : '', p.closeBy ? iso(p.closeBy) : '', p.exit !== undefined ? String(p.exit) : '', pct !== undefined ? pct.toFixed(2) : '',
+      ]);
+      const cls = x.status.kind === 'flat' ? 'dim-row' : '';
+      return `<tr class="${cls}" data-sym="${sym}">${coin}
+        <td><span class="pill ${x.status.kind === 'close-now' ? 'close' : p.side === 'long' ? 'buy' : 'sell'}${x.status.kind === 'flat' ? ' dim' : ''}">${statusText(x).replace(' (last trade)', '')}</span></td>
+        <td class="${p.side}">${p.gold ? '🥇 GOLD' : p.side === 'long' ? 'LONG' : 'SHORT'}${p.grade && !p.gold ? ` ${p.grade}` : ''}</td>
+        <td>${dateText(p.entryTime)}</td>
+        <td>${money(p.entry)}</td>
+        <td class="short">${money(p.stopNow)}${p.stopNow !== p.stop ? ' <span class="muted">(entry)</span>' : ''}</td>
+        <td>${money(p.r1)}</td><td>${money(p.r2)}${p.added ? ' ✓' : ''}</td><td>${money(p.r3)}</td>
+        <td>${p.goldTp ? money(p.goldTp) : '<span class="muted">—</span>'}</td>
+        <td>${p.exit !== undefined ? money(p.exit) : x.status.kind === 'open-now' ? '<span class="muted">—</span>' : `<span class="muted">now</span> ${money(x.price)}`}</td>
+        <td class="${pct === undefined ? 'muted' : pct >= 0 ? 'long' : 'short'}">${pct === undefined ? '—' : pctText(pct)}</td></tr>`;
+    })
+    .join('');
+  allPlansCsv = csv.map((r) => r.join(',')).join('\n');
+  ui.allPlans.innerHTML = `
+    <h3>All coins · ${interval} · entries, stops and targets</h3>
+    <div class="table-scroll"><table class="plan">
+      <tr><th>Coin</th><th>Status</th><th>Side</th><th>Opened</th><th>Entry</th><th>Stop</th><th>+1R</th><th>+2R · add ½</th><th>+3R</th><th>🥇 Gold TP</th><th>Exit / now</th><th>Result</th></tr>
+      ${body}
+    </table></div>
+    ${loading ? `<p class="note">Loading ${loading} more coins…</p>` : ''}
+    <p class="note">Tap a coin to open its chart. Switch <b>Timeframe</b> at the top to see the ${interval === '4h' ? '1h' : '4h'} signals. Coins with no trade show their last trade, faded. <button type="button" id="csvAll" class="ghost">Download CSV</button></p>`;
+  ui.allPlans.querySelectorAll<HTMLTableRowElement>('tr[data-sym]').forEach((tr) =>
+    tr.addEventListener('click', () => {
+      ui.symbol.value = tr.dataset.sym!;
+      void run();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }),
+  );
+  $('csvAll')?.addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([allPlansCsv], { type: 'text/csv' }));
+    a.download = `signal-${interval}-all-coins.csv`;
+    a.click();
+  });
 }
 
 function renderFrontier(description: string, params: Record<string, number>) {
@@ -1003,7 +1071,7 @@ async function run() {
     btcRegime = await regimeFor(interval, candles.map((b) => b.time), btcCandles).catch(() => btcRegimeByTime(btcCandles));
     if (id !== runId) return;
     await analyze(id);
-    if (mode === 'simple' && scannedInterval !== interval) {
+    if (scannedInterval !== interval) {
       scannedInterval = interval;
       void renderScanner().then(renderMomentum);
       renderAlerts();
@@ -1025,7 +1093,7 @@ async function run() {
           btcRegime = await regimeFor(interval, candles.map((b) => b.time), btcCandles).catch(() => btcRegimeByTime(btcCandles));
           await analyze(id);
           if (id === runId) notifyLatest(symbol, interval);
-          if (mode === 'simple') void renderScanner();
+          void renderScanner();
         };
         void refresh();
       } else {

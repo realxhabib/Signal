@@ -137,3 +137,4 @@ table.plan td { padding: 6px 8px; border-bottom: 1px solid #1b212a; vertical-ali
 table.plan tr[data-k] { cursor: pointer; }
 table.plan tr[data-k]:hover { background: #161b22; }
 table.plan tr.sel { background: #1c2533; }
+.dim-row td { opacity: 0.6; }
