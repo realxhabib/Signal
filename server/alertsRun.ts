@@ -70,6 +70,8 @@ async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>) {
   await Promise.all(Array.from({ length: n }, async () => { for (let x = q.shift(); x !== undefined; x = q.shift()) await fn(x); }));
 }
 
+const isOn = (v: string | undefined) => !!v && /^(1|true|yes|on)$/i.test(v.trim());
+
 /** Timeframes whose most recent candle closed within `withinSec` of `now`. */
 export function dueIntervals(now: number, withinSec = 1200): { interval: Interval; barClose: number }[] {
   return (['4h', '1h'] as Interval[])
@@ -111,13 +113,16 @@ export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env;
     }
   }
   const sent: string[] = [];
-  const fresh = events.filter((e) => !sentKeys.has(`${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`));
+  // ALERT_GOLD_ONLY=1 sends gold setups only; everything else stays in the response for the app.
+  const goldOnly = isOn(env.ALERT_GOLD_ONLY);
+  const fresh = events.filter((e) => (!goldOnly || e.gold) && !sentKeys.has(`${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`));
   if (opts.send !== false && fresh.length) {
     for (const e of fresh) sentKeys.add(`${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`);
     for (const ch of channels(env)) {
       for (const e of fresh) {
         try {
-          const priority = levels[e.symbol] === 'priority';
+          // Gold setups always ring (off coins are never checked).
+          const priority = levels[e.symbol] === 'priority' || !!e.gold;
           if (ch.name === 'sms' && !priority) continue;
           await ch.send(formatAlert(e, priority), priority);
           sent.push(`${ch.name}:${e.symbol}:${e.interval}:${e.kind}${priority ? ':priority' : ''}`);
@@ -135,6 +140,7 @@ export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env;
     errors,
     channels: channels(env).map((c) => c.name),
     priority: Object.keys(levels).filter((s) => levels[s] === 'priority'),
+    goldOnly,
   };
 }
 

@@ -12,7 +12,7 @@ import {
 } from 'lightweight-charts';
 import './styles.css';
 import { backtest, defaultRisk, summarize, type BacktestResult, type Stats } from './backtest.js';
-import { ALLOCATION, composite, LEVELS, lineupFor, modeOf, SPLIT, type MarketMode } from './composite.js';
+import { ALLOCATION, composite, GOLD, isGold, LEVELS, lineupFor, modeOf, SPLIT, type MarketMode } from './composite.js';
 import { GRADE_SIZE, gradeSignals, type Grade } from './grade.js';
 import portfolioStats from './portfolioStats.json' with { type: 'json' };
 import { alignRegime, applyBtcGate, btcRegimeByTime, coinStatus, type CoinStatus } from './scan.js';
@@ -68,7 +68,7 @@ for (const [sym, name] of Object.entries(ASSETS)) ui.symbol.add(new Option(`${na
 for (const iv of INTERVALS) ui.interval.add(new Option(iv, iv));
 ui.interval.value = '4h';
 
-const COLORS = { long: '#26a69a', short: '#ef5350', veto: '#8a94a3', fast: '#4aa3ff', slow: '#f5a623', ema: '#6b7684' };
+const COLORS = { gold: '#e6b422', long: '#26a69a', short: '#ef5350', veto: '#8a94a3', fast: '#4aa3ff', slow: '#f5a623', ema: '#6b7684' };
 
 const chartOptions = {
   layout: { background: { type: ColorType.Solid, color: '#0e1117' }, textColor: '#8a94a3' },
@@ -283,12 +283,13 @@ function render(
   for (const tr of trades) {
     const long = tr.side === 'long';
     const g = grades.get(tr.entryIndex - 1);
+    const gold = isGold(ui.interval.value, tr.side, g);
     m.push({
       time: t(candles[tr.entryIndex].time),
       position: long ? 'belowBar' : 'aboveBar',
       shape: long ? 'arrowUp' : 'arrowDown',
-      color: long ? COLORS.long : COLORS.short,
-      text: `${word(tr.side)}${g ? ` ${g}` : ''}${simple ? '' : ` ${money(tr.entryPrice)}`}`,
+      color: gold ? COLORS.gold : long ? COLORS.long : COLORS.short,
+      text: `${gold ? '🥇 GOLD' : `${word(tr.side)}${g ? ` ${g}` : ''}`}${simple ? '' : ` ${money(tr.entryPrice)}`}`,
       size,
     });
     for (const f of tr.fills ?? [])
@@ -323,7 +324,8 @@ function render(
   if (pending.signal && (!open0 || pending.signal.side !== open0.side)) {
     const long = pending.signal.side === 'long';
     const g = grades.get(pending.signal.index);
-    m.push({ time: lastTime, position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown', color: long ? COLORS.long : COLORS.short, text: `${word(pending.signal.side)}${g ? ` ${g}` : ''} at next open`, size });
+    const gold = isGold(ui.interval.value, pending.signal.side, g);
+    m.push({ time: lastTime, position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown', color: gold ? COLORS.gold : long ? COLORS.long : COLORS.short, text: `${gold ? '🥇 GOLD' : `${word(pending.signal.side)}${g ? ` ${g}` : ''}`} at next open`, size });
   }
   if (!simple) {
     // Signals the Jev filter vetoed.
@@ -371,6 +373,15 @@ const modeBanner = () => {
   return `<div class="mode-banner ${mm}"><b>Market mode: ${mm.toUpperCase()}</b><span>${MODE_TEXT[mm]} Set by Bitcoin’s trend.</span></div>`;
 };
 
+/** Gold plan for a 1h Grade A long: take profit, time limit, and whether the target has already been reached. */
+function goldRow(entry: number, s: 'long' | 'short', atr: number, entryTime: number, entryIndex?: number) {
+  const dir = s === 'long' ? 1 : -1;
+  const target = entry + dir * GOLD.targetAtr * atr;
+  const closeBy = entryTime + GOLD.maxBars * (candles[1].time - candles[0].time);
+  const hit = entryIndex !== undefined && candles.slice(entryIndex).some((b) => (dir === 1 ? b.high >= target : b.low <= target));
+  return `<dt>🥇 Gold plan</dt><dd>${hit ? `target ${money(target)} reached ✓` : `take profit ${money(target)} (+${GOLD.targetAtr} ATR) · close by ${dateText(closeBy)} if not hit`}</dd>`;
+}
+
 const GRADE_TEXT: Record<Grade, string> = {
   A: 'A · strong (top 20% historically)',
   B: 'B · normal',
@@ -410,6 +421,7 @@ function renderSimple(
         <dt>Last close</dt><dd>${money(price)}</dd>
         ${opening ? `<dt>Stop</dt><dd class="short">${money(stop)} (${pctText(((stop - price) / price) * 100)})</dd>` : ''}
         ${g ? `<dt>Signal strength</dt><dd>${GRADE_TEXT[g]}</dd>` : ''}
+        ${opening && isGold(ui.interval.value, s, g) ? goldRow(price, s, out.atr[candles.length - 1], candles[candles.length - 1].time + (candles[1].time - candles[0].time)) : ''}
         ${!opening && open ? `<dt>Trade result</dt><dd class="${(open.side === 'long' ? price - open.entryPrice : open.entryPrice - price) >= 0 ? 'long' : 'short'}">${pctText((((open.side === 'long' ? 1 : -1) * (price - open.entryPrice)) / open.entryPrice) * 100)} so far</dd>` : ''}
       </dl>
       ${opening ? `<ul class="reasons">${openingNow!.reasons.map((r) => `<li>${r}</li>`).join('')}</ul>` : ''}
@@ -438,6 +450,7 @@ function renderSimple(
             : ''
         }
         ${g ? `<dt>Signal strength</dt><dd>${GRADE_TEXT[g]}</dd>` : ''}
+        ${isGold(ui.interval.value, open.side, g) ? goldRow(open.entryPrice, open.side, out.atr[open.entryIndex - 1], candles[open.entryIndex].time, open.entryIndex) : ''}
       </dl>
       <p class="note">It closes when none of its strategies still want the trade, the trend turns against it, or the stop is hit. A CLOSE arrow appears on the chart when that happens.</p>
       ${explain}`;
@@ -566,11 +579,12 @@ function notifyLatest(symbol: string, interval: string) {
   if (level === 'off') return;
   for (const e of latestEvents(candles, symbol, interval, btcRegime)) {
     const key = `${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`;
-    if (notified.has(key)) continue;
+    if (notified.has(key) || (goldOnly && !e.gold)) continue;
     notified.add(key);
-    const [title, ...body] = formatAlert(e, level === 'priority').split('\n');
+    const loud = level === 'priority' || !!e.gold;
+    const [title, ...body] = formatAlert(e, loud).split('\n');
     try {
-      new Notification(title, { body: body.join('\n'), tag: key, requireInteraction: level === 'priority', silent: level !== 'priority' });
+      new Notification(title, { body: body.join('\n'), tag: key, requireInteraction: loud, silent: !loud });
     } catch {
       /* some mobile browsers only allow notifications from a service worker */
     }
@@ -601,6 +615,7 @@ try {
   alertLevels = {};
 }
 const levelOf = (sym: string): AlertLevel => alertLevels[sym] ?? 'normal';
+let goldOnly = store.get('signal-alert-gold-only') === '1';
 const alertQuery = (extra: string[] = []) => {
   const key = store.get('signal-alerts-key');
   const spec = levelsToSpec(alertLevels);
@@ -615,7 +630,7 @@ function renderAlerts() {
   const perm = supported ? Notification.permission : 'unsupported';
   const pri = Object.keys(ASSETS).filter((s) => levelOf(s) === 'priority');
   const off = Object.keys(ASSETS).filter((s) => levelOf(s) === 'off');
-  const envLines = [`ALERT_PRIORITY=${pri.join(',')}`, `ALERT_OFF=${off.join(',')}`].join('\n');
+  const envLines = [`ALERT_PRIORITY=${pri.join(',')}`, `ALERT_OFF=${off.join(',')}`, `ALERT_GOLD_ONLY=${goldOnly ? 1 : 0}`].join('\n');
   const locked = alertStatus.startsWith('Locked');
   ui.alerts.innerHTML = `
     <h3>Alerts</h3>
@@ -639,6 +654,10 @@ function renderAlerts() {
         return `<button type="button" class="lvl ${l}" data-sym="${s}" title="${ASSETS[s]}: ${l} (tap to change)">${l === 'priority' ? '🚨 ' : ''}${s.replace('USDT', '')}</button>`;
       })
       .join('')}</div>
+    <div class="gold-box">
+      <label class="toggle"><input type="checkbox" id="goldOnly" ${goldOnly ? 'checked' : ''} /> 🥇 Only send gold alerts</label>
+      <p class="note"><b>Gold</b> = a 1h Grade A long, traded with a close take-profit (${GOLD.targetAtr} ATR), the normal stop (${GOLD.stopAtr} ATR) and a ${GOLD.maxBars}-hour time limit. About 6 a week across all coins, and they won ${Math.round(GOLD.winResearch * 100)}% of the time in the backtest (${Math.round(GOLD.winLocked * 100)}% in the locked final year) vs about 40–55% for regular signals. Wins are smaller than losses, so the edge per trade is small: size normally, don't size up. Gold alerts always ring, and they only come in bull or neutral markets (no longs in bear mode).</p>
+    </div>
     <p class="note"><b>Tap a coin</b> to cycle Normal → 🚨 Priority → Off, then copy these lines into Vercel → Settings → Environment Variables and redeploy (the hourly check runs on the server, so it reads its settings there):</p>
     <pre class="env">${envLines}</pre>
     <button type="button" id="copyEnv" class="ghost">Copy</button>
@@ -653,6 +672,11 @@ function renderAlerts() {
       renderAlerts();
     }),
   );
+  $('goldOnly')?.addEventListener('change', (e) => {
+    goldOnly = (e.target as HTMLInputElement).checked;
+    store.set('signal-alert-gold-only', goldOnly ? '1' : '0');
+    renderAlerts();
+  });
   $('copyEnv')?.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(envLines);

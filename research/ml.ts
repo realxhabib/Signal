@@ -100,7 +100,9 @@ for (const [name, weight] of [
 if (process.env.EXPORT && TARGET !== 'win') {
   const { writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');
-  const allIdx = trades.map((_, k) => k);
+  // CUTOFF (unix seconds) trains on trades closed before it only, for clean locked-year checks.
+  const cut = Number(process.env.CUTOFF ?? Infinity);
+  const allIdx = trades.map((t, k) => (t.exitTime < cut ? k : -1)).filter((k) => k >= 0);
   const w = new Float64Array(dim + 1);
   // Re-run training to capture the weights (same settings as the walk-forward).
   for (let e = 0; e < 300; e++) {
@@ -118,13 +120,14 @@ if (process.env.EXPORT && TARGET !== 'win') {
   const preds = allIdx.map((k) => { let z = w[dim]; for (let j = 0; j < dim; j++) z += w[j] * X[k][j]; return z; }).sort((a, b) => a - b);
   const at = (q: number) => +preds[Math.floor(q * (preds.length - 1))].toFixed(4);
   const model = {
-    trainedOn: `${trades.length} Signal Composite longs, 20 coins, ${iv}, ${new Date().toISOString().slice(0, 10)}`,
+    trainedOn: `${allIdx.length} Signal Composite longs, 20 coins, ${iv}, ${new Date().toISOString().slice(0, 10)}`,
     features: [...names, 'vote:supertrend', 'vote:rsi2-pullback', 'vote:band-reversion'],
     weights: Array.from(w.slice(0, dim), (v) => +v.toFixed(5)),
     bias: +w[dim].toFixed(5),
     grades: { a: at(0.8), c: at(0.2) }, // >= a: top 20% (A), < c: bottom 20% (C)
     oos: { topQuintileAvgR: 0.425, restAvgR: 0.05 },
   };
-  writeFileSync(join(import.meta.dirname, '..', 'src', 'signalModel.json'), JSON.stringify(model) + '\n');
-  console.log('exported src/signalModel.json');
+  const outFile = process.env.MODEL_OUT ?? join(import.meta.dirname, '..', 'src', 'signalModel.json');
+  writeFileSync(outFile, JSON.stringify(model) + '\n');
+  console.log(`exported ${outFile}`);
 }

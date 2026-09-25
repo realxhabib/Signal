@@ -85,6 +85,16 @@ export function lineupFor(interval: string) {
   return { ...RECOMMENDED, mask: RECOMMENDED.mask + hma, shortMask: RECOMMENDED.shortMask + hma };
 }
 
+/**
+ * Gold setup (research/gold.ts, RESULTS-gold.md): 1h Grade A longs traded as a bracket, take profit at 1.5 ATR, stop at
+ * 3 ATR, closed after 30 hours if neither hits. It trades less often (about 6 a week across 20 coins) and wins more
+ * (69% in the research years, 72% in the locked final year with a grade model trained before it; +0.07R and +0.09R a
+ * trade). Stricter vote/trend filters and the same idea on 4h did not hold up.
+ */
+export const GOLD = { interval: '1h', grade: 'A', targetAtr: 1.5, stopAtr: 3, maxBars: 30, winResearch: 0.69, winLocked: 0.72 } as const;
+export const isGold = (interval: string, side: 'long' | 'short', grade: string | undefined) =>
+  interval === GOLD.interval && side === 'long' && grade === GOLD.grade;
+
 export type MarketMode = 'bull' | 'neutral' | 'bear';
 export const ALLOCATION: Record<MarketMode, { longRisk: number; longSlots: number; shortRisk: number; shortSlots: number }> = {
   bull: { longRisk: 1, longSlots: 5, shortRisk: 0, shortSlots: 0 },

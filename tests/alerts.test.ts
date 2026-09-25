@@ -150,3 +150,50 @@ describe('alerts endpoint access', () => {
     expect(isAuthorized(null, 'k', { CRON_SECRET: 'c', ALERTS_KEY: 'k' })).toBe(true);
   });
 });
+
+import { GOLD, isGold } from '../src/composite';
+
+describe('gold alerts', () => {
+  it('are 1h Grade A longs only', () => {
+    expect(isGold('1h', 'long', 'A')).toBe(true);
+    expect(isGold('4h', 'long', 'A')).toBe(false);
+    expect(isGold('1h', 'short', 'A')).toBe(false);
+    expect(isGold('1h', 'long', 'B')).toBe(false);
+    expect(isGold('1h', 'long', undefined)).toBe(false);
+  });
+
+  it('carry a near take-profit, the normal stop and a time limit', () => {
+    const c = series(1400, 3600);
+    const reg = btcRegimeByTime(c);
+    let opens = 0;
+    let golds = 0;
+    for (let cut = 1000; cut < 1400; cut += 2) {
+      for (const e of latestEvents(c.slice(0, cut), 'ETHUSDT', '1h', reg)) {
+        if (e.kind !== 'open') continue;
+        opens++;
+        expect(!!e.gold).toBe(isGold('1h', e.side, e.grade));
+        if (!e.gold) continue;
+        golds++;
+        const atr = (e.price - e.gold.stop) / GOLD.stopAtr;
+        expect(atr).toBeGreaterThan(0);
+        expect(e.gold.target).toBeCloseTo(e.price + GOLD.targetAtr * atr, 6);
+        expect(e.gold.stop).toBeCloseTo(e.stop!, 6); // same stop as the regular signal
+        expect(e.gold.closeBy).toBe(e.barClose + GOLD.maxBars * 3600);
+      }
+    }
+    expect(opens).toBeGreaterThan(golds);
+  }, 120_000);
+
+  it('formats a gold message with target, stop and deadline', () => {
+    const e: AlertEvent = {
+      symbol: 'SOLUSDT', interval: '1h', kind: 'open', side: 'long', price: 200, barClose: 1_700_006_400, mode: 'bull', stop: 188, addAt: 224, grade: 'A',
+      riskMult: 1, safeLeverage: 12, reasons: ['RSI(2) pullback'], gold: { target: 206, stop: 188, closeBy: 1_700_006_400 + 30 * 3600 },
+    };
+    const text = formatAlert(e, true);
+    expect(text.startsWith('🥇 GOLD LONG SOL')).toBe(true);
+    expect(text).toContain('Take profit $206 (+1.5 ATR)');
+    expect(text).toContain('stop $188 (3 ATR)');
+    expect(text).toContain('Close by 2023-11-16 06:00 UTC');
+    expect(text).not.toContain('add ½');
+  });
+});

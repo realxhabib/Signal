@@ -1,6 +1,6 @@
 // Alert events for the latest closed candle, shared by the server cron (api/alerts.ts) and the app.
 import { backtest, defaultRisk } from './backtest.js';
-import { ALLOCATION, composite, LEVELS, lineupFor, modeOf, type MarketMode } from './composite.js';
+import { ALLOCATION, composite, GOLD, isGold, LEVELS, lineupFor, modeOf, type MarketMode } from './composite.js';
 import { ASSETS } from './data.js';
 import { gradeSignals, type Grade } from './grade.js';
 import { applyBtcGate } from './scan.js';
@@ -22,6 +22,8 @@ export interface AlertEvent {
   riskMult?: number; // multiple of the base risk per trade for this signal
   safeLeverage?: number;
   reasons?: string[];
+  /** Gold setup (1h Grade A long): bracket trade with a near take-profit and a time limit. */
+  gold?: { target: number; stop: number; closeBy: number };
 }
 
 /**
@@ -57,6 +59,11 @@ export function latestEvents(candles: Candle[], symbol: string, interval: string
     const dist = risk.stopAtr * out.atr[last];
     const stop = price - dir * dist;
     const alloc = ALLOCATION[mode];
+    const grade = sig.side === 'long' ? gradeSignals(candles, [sig]).get(sig.index) : undefined;
+    const atr = out.atr[last];
+    const gold = isGold(interval, sig.side, grade)
+      ? { target: price + dir * GOLD.targetAtr * atr, stop: price - dir * GOLD.stopAtr * atr, closeBy: barClose + GOLD.maxBars * barSec }
+      : undefined;
     events.push({
       symbol,
       interval,
@@ -67,10 +74,11 @@ export function latestEvents(candles: Candle[], symbol: string, interval: string
       mode,
       stop,
       addAt: price + dir * 2 * dist,
-      grade: sig.side === 'long' ? gradeSignals(candles, [sig]).get(sig.index) : undefined,
+      grade,
       riskMult: sig.side === 'long' ? alloc.longRisk : alloc.shortRisk,
       safeLeverage: safeLeverage(price, stop),
       reasons: sig.reasons,
+      gold,
     });
   }
   return events;
@@ -104,13 +112,25 @@ export function levelsToSpec(levels: Record<string, AlertLevel>): string {
 
 /** Plain-text message for one event (works for Telegram, SMS, ntfy and Discord). */
 export function formatAlert(e: AlertEvent, priority = false): string {
-  return (priority ? '🚨 PRIORITY · ' : '') + formatBody(e);
+  return (priority && !e.gold ? '🚨 PRIORITY · ' : '') + formatBody(e);
 }
+
+const utc = (t: number) => new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 
 function formatBody(e: AlertEvent): string {
   const coin = `${e.symbol.replace('USDT', '')} (${ASSETS[e.symbol] ?? e.symbol}) · ${e.interval}`;
   const side = e.side === 'long' ? 'LONG' : 'SHORT';
-  const when = new Date(e.barClose * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+  const when = utc(e.barClose);
+  if (e.kind === 'open' && e.gold)
+    return [
+      `🥇 GOLD ${side} ${coin}`,
+      `Price ${fmtPrice(e.price)} · act at the next open`,
+      `Take profit ${fmtPrice(e.gold.target)} (+${GOLD.targetAtr} ATR) · stop ${fmtPrice(e.gold.stop)} (${GOLD.stopAtr} ATR)`,
+      `Close by ${utc(e.gold.closeBy)} if neither hits · no adds`,
+      `Backtest: won ${Math.round(GOLD.winResearch * 100)}% (locked year ${Math.round(GOLD.winLocked * 100)}%) · max safe leverage ${e.safeLeverage}x`,
+      `Market mode ${e.mode.toUpperCase()} · ${(e.reasons ?? []).join(', ')}`,
+      `Candle closed ${when}`,
+    ].join('\n');
   if (e.kind === 'open')
     return [
       `${e.side === 'long' ? '🟢' : '🔴'} OPEN ${side} ${coin}`,

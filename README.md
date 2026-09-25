@@ -200,6 +200,25 @@ Environment Variables, then redeploy and press **Send test** in the 🔔 Alerts 
 The hourly check runs on the server, so levels live in `ALERT_PRIORITY=BTCUSDT,ETHUSDT` and `ALERT_OFF=…`; the
 Alerts card writes these lines for you (tap coins, press Copy, paste into Vercel, redeploy).
 
+### 🥇 Gold alerts (fewer signals, higher win rate)
+
+A gold alert is a **1h Grade A long** traded as a bracket: take profit at **+1.5 ATR**, the normal **3 ATR** stop,
+and close after **30 hours** if neither is hit (no adds). About 6 a week across the 20 coins; none in bear mode.
+Gold alerts always ring (and go by SMS), unless the coin is Off. Set `ALERT_GOLD_ONLY=1` (the card's
+"Only send gold alerts" box) to receive nothing else.
+
+From `research/gold.ts` ([RESULTS-gold.md](research/RESULTS-gold.md)), fees 0.02% a side:
+
+| | Win rate | Avg per trade |
+|---|---|---|
+| Research years (2017 – Sep 2025) | 69% | +0.07R |
+| Locked final year, grade model trained before it | 72% | +0.09R |
+
+The high win rate comes partly from the near target: wins are about half the size of losses, so the edge per trade
+is small (with 0.05% market-order fees it drops to about +0.04R). Trade gold alerts at normal size, not bigger.
+Stricter filters (more strategies agreeing, higher-timeframe trend, Bitcoin trend) raised the win rate by only a
+few points and didn't hold up on the locked year, and the same gold setup on 4h lost money in the locked year.
+
 The endpoint only ever sends events it computes itself (never caller-supplied text), and repeats within the same
 candle are suppressed. Browser pop-up notifications for the chart you're viewing can also be turned on from the card. Every alert matches the trade the backtest takes (tested in `tests/alerts.test.ts`).
 

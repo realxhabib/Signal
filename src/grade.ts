@@ -14,7 +14,7 @@ export const GRADE_SIZE: Record<Grade, number> = { A: 1.5, B: 1, C: 0.5 };
  * which strategies voted (research/ml.ts). A = top 20% of historical scores,
  * C = bottom 20%. Out of sample, A-grade trades averaged ~0.4R vs ~0.05R for the rest.
  */
-export function gradeSignals(c: Candle[], signals: Signal[]): Map<number, Grade> {
+export function gradeSignals(c: Candle[], signals: Signal[], m: typeof model = model): Map<number, Grade> {
   const out = new Map<number, Grade>();
   if (!signals.length) return out;
   const f = computeFeatures(c);
@@ -22,12 +22,12 @@ export function gradeSignals(c: Candle[], signals: Signal[]): Map<number, Grade>
   const voteIdx: Record<string, number> = { 'vote:supertrend': 0, 'vote:rsi2-pullback': 1, 'vote:band-reversion': 2 };
   for (const s of signals) {
     if (s.side !== 'long') continue;
-    let z = model.bias;
-    model.features.forEach((name, j) => {
+    let z = m.bias;
+    m.features.forEach((name, j) => {
       const x = name in voteIdx ? (v[voteIdx[name]][s.index] === 1 ? 1 : 0) : (f.conditions.get(name)?.[s.index] ?? 0);
-      z += model.weights[j] * x;
+      z += m.weights[j] * x;
     });
-    out.set(s.index, z >= model.grades.a ? 'A' : z < model.grades.c ? 'C' : 'B');
+    out.set(s.index, z >= m.grades.a ? 'A' : z < m.grades.c ? 'C' : 'B');
   }
   return out;
 }
