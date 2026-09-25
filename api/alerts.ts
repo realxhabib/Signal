@@ -5,6 +5,7 @@
 //   GET /api/alerts?dry=1      → compute events without sending
 //   GET /api/alerts?test=1     → send a test message to every configured channel
 // Optional: set ALERTS_KEY to require ?key=… on every call.
+// ?levels=BTCUSDT:p,DOGEUSDT:off sets per-coin levels (priority = loud + SMS, off = not sent; default normal).
 import { runAlerts, sendTest } from '../server/alertsRun.js';
 
 export async function GET(request: Request): Promise<Response> {
@@ -13,5 +14,5 @@ export async function GET(request: Request): Promise<Response> {
   const authed = !secret || url.searchParams.get('key') === secret;
   if (!authed) return Response.json({ error: 'unauthorized' }, { status: 401 });
   if (url.searchParams.get('test')) return Response.json(await sendTest());
-  return Response.json(await runAlerts({ send: !url.searchParams.get('dry') }));
+  return Response.json(await runAlerts({ send: !url.searchParams.get('dry'), levels: url.searchParams.get('levels') }));
 }

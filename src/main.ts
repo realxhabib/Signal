@@ -18,7 +18,7 @@ import portfolioStats from './portfolioStats.json' with { type: 'json' };
 import { alignRegime, applyBtcGate, btcRegimeByTime, coinStatus, type CoinStatus } from './scan.js';
 import { lastMonday, MOMENTUM, momentumPicks } from './momentum.js';
 import { safeLeverage } from './sizing.js';
-import { formatAlert, latestEvents } from './alerts.js';
+import { formatAlert, latestEvents, levelsToSpec, type AlertLevel } from './alerts.js';
 import { ASSETS, INTERVALS, loadCandles, streamCandles, type Interval } from './data.js';
 import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from './jev.js';
 import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './quant.js';
@@ -562,13 +562,15 @@ async function regimeFor(interval: string, times: number[], sameIntervalBtc: Can
 const notified = new Set<string>();
 function notifyLatest(symbol: string, interval: string) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const level = levelOf(symbol);
+  if (level === 'off') return;
   for (const e of latestEvents(candles, symbol, interval, btcRegime)) {
     const key = `${e.symbol}|${e.interval}|${e.barClose}|${e.kind}`;
     if (notified.has(key)) continue;
     notified.add(key);
-    const [title, ...body] = formatAlert(e).split('\n');
+    const [title, ...body] = formatAlert(e, level === 'priority').split('\n');
     try {
-      new Notification(title, { body: body.join('\n'), tag: key });
+      new Notification(title, { body: body.join('\n'), tag: key, requireInteraction: level === 'priority', silent: level !== 'priority' });
     } catch {
       /* some mobile browsers only allow notifications from a service worker */
     }
@@ -592,6 +594,19 @@ const store = {
   },
 };
 let alertStatus = store.get('signal-alert-status') ?? 'No check yet';
+let alertLevels: Record<string, AlertLevel> = {};
+try {
+  alertLevels = JSON.parse(store.get('signal-alert-levels') ?? '{}');
+} catch {
+  alertLevels = {};
+}
+const levelOf = (sym: string): AlertLevel => alertLevels[sym] ?? 'normal';
+const alertQuery = (extra: string[] = []) => {
+  const key = store.get('signal-alerts-key');
+  const spec = levelsToSpec(alertLevels);
+  const q = [...extra, ...(key ? [`key=${encodeURIComponent(key)}`] : []), ...(spec ? [`levels=${spec}`] : [])];
+  return q.length ? `?${q.join('&')}` : '';
+};
 
 /** Ask the server to check every coin and send phone alerts, once per hourly candle close. */
 async function triggerAlerts(force = false) {
@@ -600,9 +615,8 @@ async function triggerAlerts(force = false) {
   const into = now - hour * 3600;
   if (!force && (into < 60 || into > 1200 || store.get('signal-alert-hour') === String(hour))) return;
   store.set('signal-alert-hour', String(hour));
-  const key = store.get('signal-alerts-key');
   try {
-    const r = await fetch(`/api/alerts${key ? `?key=${encodeURIComponent(key)}` : ''}`);
+    const r = await fetch(`/api/alerts${alertQuery()}`);
     const j = await r.json();
     alertStatus = r.ok
       ? `Checked ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: ${j.events.length} signal${j.events.length === 1 ? '' : 's'}, ${j.sent.length} message${j.sent.length === 1 ? '' : 's'} sent${j.channels.length ? '' : ' (no channel configured)'}`
@@ -633,15 +647,31 @@ function renderAlerts() {
               : '<button id="enableNotify">Turn on</button>'
       }</dd>
     </dl>
+    <div class="levels">${Object.keys(ASSETS)
+      .map((s) => {
+        const l = levelOf(s);
+        return `<button type="button" class="lvl ${l}" data-sym="${s}" title="${ASSETS[s]}: ${l} (tap to change)">${l === 'priority' ? '🚨 ' : ''}${s.replace('USDT', '')}</button>`;
+      })
+      .join('')}</div>
+    <p class="note"><b>Tap a coin</b> to cycle Normal → 🚨 Priority → Off. Priority coins ring on Telegram, get SMS (if set up) and urgent pushes; normal coins arrive silently; off coins aren't sent.</p>
     <p class="note">While this page is open, it checks all ${Object.keys(ASSETS).length} coins on 4h and 1h a minute after every hourly candle close and sends OPEN LONG / OPEN SHORT (with stop, add level, grade and safe leverage), CLOSE and ADD ½ to your phone. Keep it open on a computer (phones pause background tabs). Setup: add <b>TELEGRAM_BOT_TOKEN</b> + <b>TELEGRAM_CHAT_ID</b> (free) and/or Twilio SMS variables in Vercel → Settings → Environment Variables, redeploy, then press Send test.</p>`;
+  ui.alerts.querySelectorAll<HTMLButtonElement>('button.lvl').forEach((b) =>
+    b.addEventListener('click', () => {
+      const s = b.dataset.sym!;
+      const next: Record<AlertLevel, AlertLevel> = { normal: 'priority', priority: 'off', off: 'normal' };
+      alertLevels = { ...alertLevels, [s]: next[levelOf(s)] };
+      if (alertLevels[s] === 'normal') delete alertLevels[s];
+      store.set('signal-alert-levels', JSON.stringify(alertLevels));
+      renderAlerts();
+    }),
+  );
   $('enableNotify')?.addEventListener('click', async () => {
     await Notification.requestPermission();
     renderAlerts();
   });
   $('testAlert')?.addEventListener('click', async () => {
-    const key = store.get('signal-alerts-key');
     try {
-      const r = await fetch(`/api/alerts?test=1${key ? `&key=${encodeURIComponent(key)}` : ''}`);
+      const r = await fetch(`/api/alerts${alertQuery(['test=1'])}`);
       const j = await r.json();
       alertStatus = r.ok ? (j.channels.length ? `Test: ${j.results.join(', ')}` : 'No channel configured yet (see setup below)') : `Test failed (${r.status})`;
     } catch (e) {

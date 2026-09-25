@@ -81,7 +81,7 @@ describe('alert channels', () => {
     globalThis.fetch = vi.fn(async (u: string, init: RequestInit) => (calls.push([u, init]), new Response('{}'))) as unknown as typeof fetch;
     const [sms] = channels({ TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 'tok', TWILIO_FROM: '+15550001', ALERT_PHONE: '+15550002' });
     expect(sms.name).toBe('sms');
-    await sms.send('CLOSE LONG BTC');
+    await sms.send('CLOSE LONG BTC', true);
     expect(calls[0][0]).toBe('https://api.twilio.com/2010-04-01/Accounts/AC1/Messages.json');
     expect(String(calls[0][1].body)).toBe('From=%2B15550001&To=%2B15550002&Body=CLOSE+LONG+BTC');
     expect((calls[0][1].headers as Record<string, string>).Authorization).toBe(`Basic ${btoa('AC1:tok')}`);
@@ -89,5 +89,48 @@ describe('alert channels', () => {
 
   it('has no channels without configuration', () => {
     expect(channels({})).toEqual([]);
+  });
+});
+
+import { levelsToSpec, parseLevels } from '../src/alerts';
+import { resolveLevels } from '../server/alertsRun';
+
+describe('per-coin alert priority', () => {
+  const known = ['BTCUSDT', 'ETHUSDT', 'DOGEUSDT'];
+  it('parses and round-trips levels, ignoring unknown coins', () => {
+    const lv = parseLevels('BTCUSDT:p,dogeusdt:off,FAKEUSDT:p,ETHUSDT:n', known);
+    expect(lv).toEqual({ BTCUSDT: 'priority', DOGEUSDT: 'off', ETHUSDT: 'normal' });
+    expect(levelsToSpec(lv)).toBe('BTCUSDT:p,DOGEUSDT:off');
+  });
+
+  it('uses env defaults, overridden by the app', () => {
+    const lv = resolveLevels({ ALERT_PRIORITY: 'BTCUSDT,ETHUSDT', ALERT_OFF: 'DOGEUSDT' }, 'ETHUSDT:n');
+    expect(lv.BTCUSDT).toBe('priority');
+    expect(lv.ETHUSDT).toBe('normal');
+    expect(lv.DOGEUSDT).toBe('off');
+    expect(lv.SOLUSDT).toBe('normal');
+  });
+
+  it('priority is loud, normal is quiet, SMS only for priority', async () => {
+    const calls: [string, RequestInit][] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (u: string, init: RequestInit) => (calls.push([u, init]), new Response('{}'))) as unknown as typeof fetch;
+    const chs = channels({ TELEGRAM_BOT_TOKEN: 't', TELEGRAM_CHAT_ID: '1', NTFY_TOPIC: 'x', TWILIO_ACCOUNT_SID: 'A', TWILIO_AUTH_TOKEN: 'B', TWILIO_FROM: '+1', ALERT_PHONE: '+2' });
+    for (const ch of chs) await ch.send('msg', false);
+    expect(JSON.parse(calls[0][1].body as string).disable_notification).toBe(true);
+    expect((calls[1][1].headers as Record<string, string>).Priority).toBe('default');
+    expect(calls).toHaveLength(2); // no SMS for a normal message
+    calls.length = 0;
+    for (const ch of chs) await ch.send('msg', true);
+    expect(JSON.parse(calls[0][1].body as string).disable_notification).toBe(false);
+    expect((calls[1][1].headers as Record<string, string>).Priority).toBe('urgent');
+    expect(calls[2][0]).toContain('api.twilio.com');
+    globalThis.fetch = real;
+  });
+
+  it('marks priority messages', () => {
+    const e = { symbol: 'BTCUSDT', interval: '4h', kind: 'close', side: 'long', price: 1, barClose: 0, mode: 'bull', resultPct: 1 } as const;
+    expect(formatAlert(e, true).startsWith('🚨 PRIORITY · ')).toBe(true);
+    expect(formatAlert(e).startsWith('🚨')).toBe(false);
   });
 });

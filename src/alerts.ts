@@ -78,8 +78,36 @@ export function latestEvents(candles: Candle[], symbol: string, interval: string
 
 const fmtPrice = (v: number) => '$' + v.toLocaleString('en-US', { maximumFractionDigits: v >= 1000 ? 0 : v >= 10 ? 2 : 4 });
 
-/** Plain-text message for one event (works for Telegram, ntfy and Discord). */
-export function formatAlert(e: AlertEvent): string {
+/** Per-coin alert level: priority (loud + SMS), normal (quiet), off (not sent). */
+export type AlertLevel = 'priority' | 'normal' | 'off';
+
+/** Parse `BTCUSDT:p,ETHUSDT:off,…` (as sent by the app) into levels for known coins only. */
+export function parseLevels(spec: string | null | undefined, known: string[]): Record<string, AlertLevel> {
+  const out: Record<string, AlertLevel> = {};
+  for (const part of (spec ?? '').split(',')) {
+    const [sym, lvl] = part.trim().toUpperCase().split(':');
+    if (!known.includes(sym)) continue;
+    if (lvl === 'P' || lvl === 'PRIORITY') out[sym] = 'priority';
+    else if (lvl === 'OFF') out[sym] = 'off';
+    else if (lvl === 'N' || lvl === 'NORMAL') out[sym] = 'normal';
+  }
+  return out;
+}
+
+/** Compact form of levels for the query string; normal is the default and is omitted. */
+export function levelsToSpec(levels: Record<string, AlertLevel>): string {
+  return Object.entries(levels)
+    .filter(([, l]) => l !== 'normal')
+    .map(([s, l]) => `${s}:${l === 'priority' ? 'p' : 'off'}`)
+    .join(',');
+}
+
+/** Plain-text message for one event (works for Telegram, SMS, ntfy and Discord). */
+export function formatAlert(e: AlertEvent, priority = false): string {
+  return (priority ? '🚨 PRIORITY · ' : '') + formatBody(e);
+}
+
+function formatBody(e: AlertEvent): string {
   const coin = `${e.symbol.replace('USDT', '')} (${ASSETS[e.symbol] ?? e.symbol}) · ${e.interval}`;
   const side = e.side === 'long' ? 'LONG' : 'SHORT';
   const when = new Date(e.barClose * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';

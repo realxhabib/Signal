@@ -186,6 +186,17 @@ Setup in Vercel → Settings → Environment Variables, then redeploy and press 
    number) and `ALERT_PHONE` (your phone, e.g. `+15551234567`).
 3. Optional: `NTFY_TOPIC` (ntfy.sh push app) or `DISCORD_WEBHOOK_URL`.
 
+**Priority coins.** In the Alerts card, tap a coin to cycle **Normal → 🚨 Priority → Off**:
+
+| Level | Telegram | SMS | ntfy / Discord |
+|---|---|---|---|
+| 🚨 Priority | rings, message starts with "🚨 PRIORITY" | sent | urgent / `@here` |
+| Normal (default) | arrives silently | not sent | normal |
+| Off | not sent | not sent | not sent |
+
+Choices are saved in the browser and sent with each check. Server-side defaults: `ALERT_PRIORITY=BTCUSDT,ETHUSDT`
+and `ALERT_OFF=…` (the app's choices override them).
+
 The endpoint only ever sends events it computes itself (never caller-supplied text), and repeats within the same
 candle are suppressed. Set `ALERTS_KEY` if you want to lock it down (then enter the key via
 `localStorage.setItem('signal-alerts-key', '…')` in the browser console). Browser pop-up notifications can also be

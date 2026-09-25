@@ -1,5 +1,5 @@
 // Server-side alert run: evaluate every coin on 4h and 1h for candles that just closed, then notify.
-import { latestEvents, formatAlert, type AlertEvent } from '../src/alerts.js';
+import { formatAlert, latestEvents, parseLevels, type AlertEvent, type AlertLevel } from '../src/alerts.js';
 import { ASSETS, loadCandles, type Interval } from '../src/data.js';
 import { alignRegime, btcRegimeByTime } from '../src/scan.js';
 
@@ -11,15 +11,17 @@ type Env = Record<string, string | undefined>;
 
 /** Channels configured through environment variables; each is optional. */
 export function channels(env: Env) {
-  const list: { name: string; send: (text: string) => Promise<void> }[] = [];
+  // `priority` messages are loud everywhere; SMS (paid) is only used for priority messages.
+  const list: { name: string; send: (text: string, priority?: boolean) => Promise<void> }[] = [];
   if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID)
     list.push({
       name: 'telegram',
-      send: async (text) => {
+      send: async (text, priority = false) => {
         const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text, disable_web_page_preview: true }),
+          // Normal messages arrive silently; priority ones ring.
+          body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text, disable_web_page_preview: true, disable_notification: !priority }),
         });
         if (!r.ok) throw new Error(`telegram ${r.status}`);
       },
@@ -27,12 +29,12 @@ export function channels(env: Env) {
   if (env.NTFY_TOPIC)
     list.push({
       name: 'ntfy',
-      send: async (text) => {
+      send: async (text, priority = false) => {
         const [title, ...body] = text.split('\n');
         const r = await fetch(`${env.NTFY_SERVER ?? 'https://ntfy.sh'}/${encodeURIComponent(env.NTFY_TOPIC!)}`, {
           method: 'POST',
           // Header values must be ASCII: drop emoji from the title.
-          headers: { Title: title.replace(/[^\x20-\x7E]/g, '').trim(), Priority: 'high', Tags: 'chart_with_upwards_trend' },
+          headers: { Title: title.replace(/[^\x20-\x7E]/g, '').trim(), Priority: priority ? 'urgent' : 'default', Tags: priority ? 'rotating_light' : 'chart_with_upwards_trend' },
           body: body.join('\n'),
         });
         if (!r.ok) throw new Error(`ntfy ${r.status}`);
@@ -41,7 +43,8 @@ export function channels(env: Env) {
   if (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM && env.ALERT_PHONE)
     list.push({
       name: 'sms',
-      send: async (text) => {
+      send: async (text, priority = false) => {
+        if (!priority) return; // SMS costs money: priority coins only
         const auth = btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`);
         const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`, {
           method: 'POST',
@@ -54,8 +57,8 @@ export function channels(env: Env) {
   if (env.DISCORD_WEBHOOK_URL)
     list.push({
       name: 'discord',
-      send: async (text) => {
-        const r = await fetch(env.DISCORD_WEBHOOK_URL!, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: text }) });
+      send: async (text, priority = false) => {
+        const r = await fetch(env.DISCORD_WEBHOOK_URL!, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: priority ? `@here ${text}` : text }) });
         if (!r.ok) throw new Error(`discord ${r.status}`);
       },
     });
@@ -74,10 +77,20 @@ export function dueIntervals(now: number, withinSec = 1200): { interval: Interva
     .filter((x) => now - x.barClose < withinSec);
 }
 
-export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env; symbols?: string[] } = {}) {
+/** Levels from the ALERT_PRIORITY / ALERT_OFF env defaults, overridden by the caller's (the app's) settings. */
+export function resolveLevels(env: Env, spec?: string | null): Record<string, AlertLevel> {
+  const known = Object.keys(ASSETS);
+  const levels: Record<string, AlertLevel> = Object.fromEntries(known.map((s) => [s, 'normal' as AlertLevel]));
+  for (const s of (env.ALERT_PRIORITY ?? '').split(',').map((x) => x.trim().toUpperCase())) if (known.includes(s)) levels[s] = 'priority';
+  for (const s of (env.ALERT_OFF ?? '').split(',').map((x) => x.trim().toUpperCase())) if (known.includes(s)) levels[s] = 'off';
+  return { ...levels, ...parseLevels(spec, known) };
+}
+
+export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env; symbols?: string[]; levels?: string | null } = {}) {
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   const env = opts.env ?? process.env;
-  const symbols = opts.symbols ?? Object.keys(ASSETS);
+  const levels = resolveLevels(env, opts.levels);
+  const symbols = (opts.symbols ?? Object.keys(ASSETS)).filter((s) => levels[s] !== 'off');
   const due = dueIntervals(now);
   const events: AlertEvent[] = [];
   const errors: string[] = [];
@@ -104,15 +117,25 @@ export async function runAlerts(opts: { now?: number; send?: boolean; env?: Env;
     for (const ch of channels(env)) {
       for (const e of fresh) {
         try {
-          await ch.send(formatAlert(e));
-          sent.push(`${ch.name}:${e.symbol}:${e.interval}:${e.kind}`);
+          const priority = levels[e.symbol] === 'priority';
+          if (ch.name === 'sms' && !priority) continue;
+          await ch.send(formatAlert(e, priority), priority);
+          sent.push(`${ch.name}:${e.symbol}:${e.interval}:${e.kind}${priority ? ':priority' : ''}`);
         } catch (err) {
           errors.push(`${ch.name}: ${(err as Error).message}`);
         }
       }
     }
   }
-  return { now, due: due.map((d) => d.interval), events, sent, errors, channels: channels(env).map((c) => c.name) };
+  return {
+    now,
+    due: due.map((d) => d.interval),
+    events: events.map((e) => ({ ...e, level: levels[e.symbol] })),
+    sent,
+    errors,
+    channels: channels(env).map((c) => c.name),
+    priority: Object.keys(levels).filter((s) => levels[s] === 'priority'),
+  };
 }
 
 export async function sendTest(env: Env = process.env) {
@@ -120,7 +143,7 @@ export async function sendTest(env: Env = process.env) {
   const results: string[] = [];
   for (const ch of chs) {
     try {
-      await ch.send('✅ Signal alerts are connected.\nYou will get OPEN / CLOSE / ADD messages here when candles close.');
+      await ch.send('🚨 PRIORITY · ✅ Signal alerts are connected.\nPriority coins ring (and get SMS); normal coins arrive quietly.', true);
       results.push(`${ch.name}: ok`);
     } catch (err) {
       results.push(`${ch.name}: ${(err as Error).message}`);
