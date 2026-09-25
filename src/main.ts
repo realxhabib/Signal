@@ -24,6 +24,7 @@ import { approves, defaultJevThresholds, judgeSignals, type JevVerdict } from '.
 import { marketContext, QUANT_PROFILES, quantRuleSet, quantStrategy } from './quant.js';
 import { STRATEGIES as BASE_STRATEGIES, type StrategyOutput } from './strategies.js';
 import { computeIndicators, defaultStrategy } from './strategy.js';
+import { goldOutcome, makePlan, type TradePlan } from './plan.js';
 import type { Candle, RiskParams, Signal, Trade } from './types.js';
 import walkforward from './walkforward.json' with { type: 'json' };
 
@@ -46,6 +47,7 @@ const ui = {
   trades: $<HTMLTableElement>('trades'),
   simpleStatus: $<HTMLDivElement>('simpleStatus'),
   simpleSignals: $<HTMLDivElement>('simpleSignals'),
+  planTable: $<HTMLDivElement>('planTable'),
   simpleRecord: $<HTMLDivElement>('simpleRecord'),
   simpleSizing: $<HTMLDivElement>('simpleSizing'),
   scanner: $<HTMLDivElement>('scanner'),
@@ -336,17 +338,103 @@ function render(
   }
   markers.setMarkers(m.sort((a, b) => (a.time as number) - (b.time as number)));
 
-  // Entry and stop lines for the position that is open right now.
+  // Entry, stop and target lines: the signal opening now, else the open trade, else the most recent trade.
+  plans = buildPlans(trades, pending, out, risk);
+  drawPlan(plans[0]);
+  renderPlanTable();
+}
+
+type RowPlan = TradePlan & { entryIndex: number };
+let plans: RowPlan[] = [];
+let shownPlan: TradePlan | undefined;
+/** Plans for every trade (newest first), plus a signal that opens at the next bar. */
+function buildPlans(trades: Trade[], pending: BacktestResult['pending'], out: StrategyOutput, risk: RiskParams): RowPlan[] {
+  const barSec = candles[1].time - candles[0].time;
+  const interval = ui.interval.value;
+  const list = trades.map((tr) => ({
+    entryIndex: tr.entryIndex,
+    ...makePlan({
+      side: tr.side, entry: tr.entryPrice, entryTime: candles[tr.entryIndex].time, atr: out.atr[tr.entryIndex - 1], stopAtr: risk.stopAtr,
+      barSec, interval, grade: grades.get(tr.entryIndex - 1), trade: tr, breakevenAfterAdd: risk.breakevenAfterAdd,
+    }),
+  }));
+  const open0 = openTrade(trades);
+  const last = candles.length - 1;
+  if (pending.signal && (!open0 || pending.signal.side !== open0.side))
+    list.push({
+      entryIndex: last + 1,
+      ...makePlan({
+        side: pending.signal.side, entry: candles[last].close, entryTime: candles[last].time + barSec, atr: out.atr[last], stopAtr: risk.stopAtr,
+        barSec, interval, grade: grades.get(pending.signal.index),
+      }),
+    });
+  return list.reverse();
+}
+
+function drawPlan(p: TradePlan | undefined) {
+  shownPlan = p;
   for (const pl of priceLines) candleSeries.removePriceLine(pl);
   priceLines = [];
-  const open = openTrade(trades);
-  if (open) {
-    const stop = stopPrice(open, out, risk);
-    priceLines.push(
-      candleSeries.createPriceLine({ price: open.entryPrice, color: COLORS.fast, lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' }),
-      candleSeries.createPriceLine({ price: stop, color: COLORS.short, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'Stop' }),
-    );
-  }
+  if (!p) return;
+  const live = p.status !== 'closed';
+  const tag = p.status === 'closed' ? ' (last)' : p.status === 'opening' ? ' (next open)' : '';
+  const line = (price: number, color: string, title: string, style = 2, width: 1 | 2 = 1) =>
+    priceLines.push(candleSeries.createPriceLine({ price, color: live ? color : color + '99', lineWidth: width, lineStyle: style, axisLabelVisible: true, title }));
+  line(p.entry, COLORS.fast, `Entry${tag}`, 0, 2);
+  line(p.stopNow, COLORS.short, p.stopNow === p.entry ? 'Stop = entry' : 'Stop', 2, 2);
+  if (p.gold && p.goldTp) line(p.goldTp, COLORS.gold, '🥇 Gold TP', 0, 2);
+  line(p.r1, COLORS.long, '+1R', 3);
+  line(p.r2, COLORS.long, p.added ? '+2R (added ½)' : '+2R: add ½', 2);
+  line(p.r3, COLORS.long, '+3R', 3);
+}
+
+function renderPlanTable() {
+  const rows = plans.slice(0, 15);
+  const GOLD_WORD = { tp: 'take profit ✓', stop: 'stop', time: 'time limit', running: 'running' };
+  const status = (p: RowPlan) => {
+    const g = p.gold && p.status !== 'opening' ? goldOutcome(candles, p.entryIndex, p) : undefined;
+    if (g) return `<span class="${g.pct >= 0 ? 'long' : 'short'}">${pctText(g.pct)}</span> <span class="muted">${GOLD_WORD[g.kind]}</span>`;
+    return p.status === 'opening'
+      ? '<span class="pill buy">OPENS NEXT BAR</span>'
+      : p.status === 'open'
+        ? '<span class="pill buy">OPEN</span>'
+        : `<span class="${p.resultPct! >= 0 ? 'long' : 'short'}">${pctText(p.resultPct!)}</span> <span class="muted">${p.exitReason === 'stop' ? 'stop' : p.exitReason === 'liquidation' ? 'LIQ' : 'signal'}</span>`;
+  };
+  const exitCell = (p: RowPlan) => {
+    const g = p.gold && p.status !== 'opening' ? goldOutcome(candles, p.entryIndex, p) : undefined;
+    if (g) return g.kind === 'running' ? '<span class="muted">—</span>' : money(g.price);
+    return p.exit !== undefined ? money(p.exit) : '<span class="muted">—</span>';
+  };
+  ui.planTable.innerHTML = rows.length
+    ? `<h3>Trade plan · entries, stops and targets</h3>
+    <div class="table-scroll"><table class="plan">
+      <tr><th>Opened</th><th>Side</th><th>Entry</th><th>Stop</th><th>+1R</th><th>+2R · add ½</th><th>+3R</th><th>🥇 Gold TP</th><th>Exit</th><th>Result</th></tr>
+      ${rows
+        .map(
+          (p, k) => `<tr data-k="${k}" class="${p === shownPlan ? 'sel' : ''}">
+        <td>${dateText(p.entryTime)}</td>
+        <td class="${p.side}">${p.gold ? '🥇 GOLD' : p.side === 'long' ? 'LONG' : 'SHORT'}${p.grade && !p.gold ? ` ${p.grade}` : ''}</td>
+        <td>${money(p.entry)}</td>
+        <td class="short">${money(p.stop)}${p.stopNow !== p.stop ? ` → ${money(p.stopNow)}` : ''}</td>
+        <td>${money(p.r1)}</td><td>${money(p.r2)}${p.added ? ' ✓' : ''}</td><td>${money(p.r3)}</td>
+        <td>${p.goldTp ? `${money(p.goldTp)}<br><span class="muted">by ${dateText(p.closeBy!)}</span>` : '<span class="muted">—</span>'}</td>
+        <td>${exitCell(p)}</td>
+        <td>${status(p)}</td></tr>`,
+        )
+        .join('')}
+    </table></div>
+    <p class="note">Tap a row to draw its lines on the chart. 1R = the distance from entry to the stop (a multiple of ATR, the coin's typical move). At +2R add half a position and move the stop to the entry. Regular trades have no fixed take-profit: they close when the strategies stop agreeing (CLOSE arrow), so +1R and +3R are reference levels. 🥇 Gold trades take profit at the Gold TP or close by the time shown.</p>`
+    : '';
+  ui.planTable.querySelectorAll<HTMLTableRowElement>('tr[data-k]').forEach((tr) =>
+    tr.addEventListener('click', () => {
+      const p = rows[+tr.dataset.k!];
+      drawPlan(p);
+      const from = p.entryTime - 40 * (candles[1].time - candles[0].time);
+      const to = (p.exitTime ?? candles[candles.length - 1].time) + 20 * (candles[1].time - candles[0].time);
+      chart.timeScale().setVisibleRange({ from: t(from), to: t(Math.min(to, candles[candles.length - 1].time)) });
+      renderPlanTable();
+    }),
+  );
 }
 
 const openTrade = (trades: Trade[]) => {
