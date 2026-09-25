@@ -17,7 +17,7 @@ generate signals, and [Jev](https://typesafe.ai), TypeSafe AI's System One model
 
 ## Signal Composite (best overall)
 
-Supertrend, RSI(2) pullback and band reversion vote at every candle. The composite goes **long** when any of them
+Supertrend, **Hull MA trend** (4h only), RSI(2) pullback and Bollinger band reversion vote at every candle. The composite goes **long** when any of them
 wants a long and the coin's trend isn't bearish, goes **short** when any wants a short and the trend isn't bullish,
 and closes when none do (3 ATR protective stop). Each long gets a **strength grade** (A = top 20% of historical
 model scores, size 1.5×; B = 1×; C = bottom 20%, 0.5×).
@@ -41,9 +41,10 @@ entry, so total risk never exceeds the original 1R.
 
 | Base risk | 2019* | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026* | Per year | Max DD | Sharpe |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1% | +7% | +246% | +512% | −1% | +193% | +67% | +129% | +52% | 130% | 35% | 1.95 |
-| 0.5% | +4% | +95% | +180% | +1% | +84% | +34% | +69% | +26% | 61% | 19% | 1.92 |
+| 1% | +15% | +314% | +531% | +6% | +309% | +183% | +89% | +70% | 171% | 45% | 2.02 |
+| 0.5% | +8% | +118% | +182% | +6% | +124% | +82% | +52% | +36% | 77% | 26% | 1.98 |
 
+With the Hull MA added on 4h, drawdowns are deeper, so **0.5–0.75% base risk** is the recommended range.
 \*partial years. **Locked final exam:** every change in this round was chosen on 2019 → Sep 2025 only; on the untouched
 last 12 months the shipped setup made **+39%** (vs +24% for the previous setup, +34% with pyramiding alone). That
 year was weaker than the history (Sharpe ~1 vs ~1.9), so expect less than the headline going forward. About a quarter
@@ -156,6 +157,8 @@ and open-interest / long-short metrics (from Dec 2021; `research/futures.ts`, fr
 | Grade sizing / momentum rotation? | Grade sizing adds return with proportionally more risk; rotation into stronger coins is noise | `RESULTS-account-tests.md` |
 | More coins / timeframes? | 13 extra coins: no gain (they alone made 11%/yr); adding a 20% 1h sleeve: Sharpe 1.77 → 1.93 | `RESULTS-scale-tests.md` |
 | Does it hold on unseen data? | Locked last 12 months: shipped setup +39% vs +24% before | `RESULTS-final-exam.md` |
+| Best indicators? | Tournament of 20 rules (`src/strategies2.ts`). Standalone leaders: Supertrend, Hull MA, Ichimoku, Donchian, Aroon; oscillator pullbacks (Stoch RSI, CCI, VWAP bands) ≈ break-even. Adding Hull MA to the 4h line-up: Sharpe 1.77 → 1.98 and locked year +46% vs +34%; the squeeze breakout looked as good historically but made +3% on the locked year; Hull MA hurt on 1h | `RESULTS-indicators-4h.md`, `RESULTS-indicators-holdout.md` |
+| Fibonacci? | Bounces at 0.382/0.5/0.618 beat the same rule at arbitrary levels (0.45/0.55/0.70): PF 1.11 vs 1.05, 16/20 vs 10/20 coins profitable — a small real effect, far weaker than trend indicators, and it hurt the composite in 2022 | `RESULTS-indicators-4h.md` |
 | Futures positioning? | "Retail crowded long" predicts weaker longs (confirmed on 6 holdout coins), but doesn't move the portfolio. Funding / OI filters were noise | `RESULTS-futures-shorts-ml.md` |
 | ML scoring? | Predicting wins picks the low-profit trades (win rate ≠ profit). Predicting profit works: top quintile +0.40R vs ~+0.05R. Shipped as A/B/C grades | `RESULTS-futures-shorts-ml.md` |
 | Overfit? | Every setting nudge stays profitable (PF 1.39–1.71); PBO 30%; 176/189 line-ups profitable; deflated Sharpe says the *exact* pick isn't special, the approach is | `RESULTS-overfitting.md` |

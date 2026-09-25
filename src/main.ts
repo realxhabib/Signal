@@ -12,7 +12,7 @@ import {
 } from 'lightweight-charts';
 import './styles.css';
 import { backtest, defaultRisk, summarize, type BacktestResult, type Stats } from './backtest';
-import { ALLOCATION, composite, LEVELS, modeOf, RECOMMENDED, SPLIT, type MarketMode } from './composite';
+import { ALLOCATION, composite, LEVELS, lineupFor, modeOf, SPLIT, type MarketMode } from './composite';
 import { GRADE_SIZE, gradeSignals, type Grade } from './grade';
 import portfolioStats from './portfolioStats.json';
 import { alignRegime, applyBtcGate, btcRegimeByTime, coinStatus, type CoinStatus } from './scan';
@@ -136,7 +136,7 @@ async function analyze(id: number) {
   const strategy = STRATEGIES.find((s) => s.id === ui.strategy.value) ?? STRATEGIES[0];
   const isComposite = strategy.id === composite.id;
   const shorts = isComposite && (mode === 'simple' || ui.allowShorts.checked);
-  const params = isComposite ? { ...RECOMMENDED, shorts: shorts ? 1 : 0 } : strategy.defaults;
+  const params = isComposite ? { ...lineupFor(ui.interval.value), shorts: shorts ? 1 : 0 } : strategy.defaults;
   const out = strategy.build(candles, params, { symbol: ui.symbol.value, interval: ui.interval.value });
   const candidates = out.signals;
   // Altcoin longs wait while Bitcoin's own trend is bearish (composite only).
@@ -640,7 +640,7 @@ async function renderScanner() {
           const c = (await loadCandles(sym, interval, 1000).catch(() => loadCandles(sym, interval, 1000))).slice(0, -1);
           if (id !== scanId) return;
           const btc = btc4 ? alignRegime(c.map((b) => b.time), SEC[interval], btc4, SEC['4h']) : btcSame;
-          rows.set(sym, coinStatus(c, sym, btc, true));
+          rows.set(sym, coinStatus(c, sym, btc, true, interval));
         } catch {
           rows.set(sym, 'error');
         }

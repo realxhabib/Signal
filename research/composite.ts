@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { backtest, defaultRisk } from '../src/backtest';
-import { composite, LEVELS, RECOMMENDED } from '../src/composite';
+import { composite, LEVELS, lineupFor } from '../src/composite';
 import { applyBtcGate, btcRegimeByTime } from '../src/scan';
 import { dataset } from './lib';
 import { UNIVERSE } from './universe';
@@ -19,7 +19,7 @@ for (const sym of UNIVERSE)
     const c = d.candles;
     const start = d.testStart;
     const years = (c[c.length - 1].time - start) / (365 * 86_400);
-    const out = composite.build(c, RECOMMENDED);
+    const out = composite.build(c, lineupFor(iv));
     const btcC = sym === 'BTCUSDT' ? c : (await dataset('BTCUSDT', iv)).candles;
     out.signals = applyBtcGate(out.signals, sym, btcRegimeByTime(btcC));
     for (const [kind, cost] of Object.entries(costs)) {

@@ -112,3 +112,46 @@ describe('recommended long + short composite', () => {
     for (let i = 0; i < c.length; i++) expect(!exitL[i] && !exitS[i]).toBe(false);
   });
 });
+
+import { NEW_STRATEGIES } from '../src/strategies2';
+import { zigzag } from '../src/indicators2';
+
+describe('indicator tournament strategies', () => {
+  const c = series(1600, 14_400);
+  for (const s of NEW_STRATEGIES) {
+    it(`${s.id} never repaints (longs and shorts)`, () => {
+      const p = { ...s.defaults, shorts: 1 };
+      const full = s.build(c, p).signals.filter((x) => x.index < 1200);
+      const prefix = s.build(c.slice(0, 1200), p).signals;
+      expect(prefix.map((x) => [x.index, x.side])).toEqual(full.map((x) => [x.index, x.side]));
+      const exitsFull = s.build(c, p).rules.exitLong!.slice(0, 1200);
+      expect(s.build(c.slice(0, 1200), p).rules.exitLong).toEqual(exitsFull);
+    });
+  }
+
+  it('zig-zag swings are only known after they are confirmed', () => {
+    const { high, low, close } = { high: c.map((b) => b.high), low: c.map((b) => b.low), close: c.map((b) => b.close) };
+    const full = zigzag(high, low, close, 3);
+    const cut = zigzag(high.slice(0, 900), low.slice(0, 900), close.slice(0, 900), 3);
+    expect(cut.lastHigh).toEqual(full.lastHigh.slice(0, 900));
+    expect(cut.leg).toEqual(full.leg.slice(0, 900));
+  });
+});
+
+import { COMPONENTS, lineupFor } from '../src/composite';
+
+describe('line-up per timeframe', () => {
+  it('adds Hull MA on 4h only', () => {
+    const hma = 2 ** COMPONENTS.findIndex((s) => s.id === 'hma');
+    expect(Math.floor(lineupFor('4h').mask / hma) % 2).toBe(1);
+    expect(Math.floor(lineupFor('1h').mask / hma) % 2).toBe(0);
+    expect(lineupFor('1h')).toEqual(RECOMMENDED);
+  });
+
+  it('4h line-up never repaints', () => {
+    const c = series(1600, 14_400);
+    const full = composite.build(c, lineupFor('4h')).signals.filter((s) => s.index < 1200);
+    const prefix = composite.build(c.slice(0, 1200), lineupFor('4h')).signals;
+    expect(prefix.map((s) => [s.index, s.side])).toEqual(full.map((s) => [s.index, s.side]));
+  });
+});

@@ -10,10 +10,14 @@ import {
   supertrendTrend,
   type StrategyDef,
 } from './strategies';
+import { NEW_STRATEGIES } from './strategies2';
 import type { Candle, Signal } from './types';
 
-/** Strategies that can vote in the composite (bit k of `mask` enables COMPONENTS[k]). */
-export const COMPONENTS: StrategyDef[] = [supertrendTrend, rsi2Pullback, bandReversion, stackedPullback, pullbackScalp, jmaConfluence];
+/**
+ * Strategies that can vote in the composite (bit k of `mask` enables COMPONENTS[k]). The first six are the
+ * original strategies; the rest come from the indicator tournament (research/indicators.ts).
+ */
+export const COMPONENTS: StrategyDef[] = [supertrendTrend, rsi2Pullback, bandReversion, stackedPullback, pullbackScalp, jmaConfluence, ...NEW_STRATEGIES];
 
 /**
  * A component's vote at the close of each bar: +1 while it holds (or has just
@@ -70,6 +74,17 @@ export const LEVELS = { pyramid: [{ r: 2, frac: 0.5 }], breakevenAfterAdd: true 
 /** Account split between the 4h and 1h Signal Composite (1h reads the market mode from Bitcoin's 4h trend). */
 export const SPLIT = { '4h': 0.8, '1h': 0.2 } as const;
 
+/**
+ * Line-up per timeframe (research/indicators.ts, RESULTS-indicators-holdout.md): on 4h the Hull MA trend joins
+ * Supertrend, RSI(2) pullback and Bollinger reversion (locked final year +46% vs +34%); on 1h it hurt, so 1h
+ * and other timeframes keep the original three.
+ */
+export function lineupFor(interval: string) {
+  if (interval !== '4h') return RECOMMENDED;
+  const hma = 2 ** COMPONENTS.findIndex((s) => s.id === 'hma');
+  return { ...RECOMMENDED, mask: RECOMMENDED.mask + hma, shortMask: RECOMMENDED.shortMask + hma };
+}
+
 export type MarketMode = 'bull' | 'neutral' | 'bear';
 export const ALLOCATION: Record<MarketMode, { longRisk: number; longSlots: number; shortRisk: number; shortSlots: number }> = {
   bull: { longRisk: 1, longSlots: 5, shortRisk: 0, shortSlots: 0 },
@@ -78,20 +93,21 @@ export const ALLOCATION: Record<MarketMode, { longRisk: number; longSlots: numbe
 };
 export const modeOf = (regime: number | undefined): MarketMode => (regime === 1 ? 'bull' : regime === -1 ? 'bear' : 'neutral');
 
-const cache = new WeakMap<Candle[], Map<string, { votes: Int8Array[]; regime: Int8Array; atr: number[] }>>();
+const cache = new WeakMap<Candle[], Map<string, (Int8Array | undefined)[]>>();
 const featureCache = new WeakMap<Candle[], ReturnType<typeof computeFeatures>>();
-function componentVotes(candles: Candle[], withShorts: boolean, p: Record<string, number> = {}) {
+/** Votes for the components selected by `needed` (bitmask), computed lazily and cached per candle set. */
+function componentVotes(candles: Candle[], withShorts: boolean, p: Record<string, number>, needed: number) {
   let byMode = cache.get(candles);
   if (!byMode) cache.set(candles, (byMode = new Map()));
   const key = `${withShorts}|${Object.entries(p).filter(([k]) => k.includes('.')).sort().join(';')}`;
-  let hit = byMode.get(key);
-  if (!hit) {
-    let f = featureCache.get(candles);
-    if (!f) featureCache.set(candles, (f = computeFeatures(candles)));
-    hit = { votes: COMPONENTS.map((s) => votes(candles, s, withShorts, overridesFor(p, s.id))), regime: f.regime, atr: f.atr };
-    byMode.set(key, hit);
-  }
-  return hit;
+  let arr = byMode.get(key);
+  if (!arr) byMode.set(key, (arr = []));
+  COMPONENTS.forEach((s, k) => {
+    if (needed & (2 ** k) && !arr![k]) arr![k] = votes(candles, s, withShorts, overridesFor(p, s.id));
+  });
+  let f = featureCache.get(candles);
+  if (!f) featureCache.set(candles, (f = computeFeatures(candles)));
+  return { votes: arr, regime: f.regime, atr: f.atr };
 }
 
 /**
@@ -103,7 +119,7 @@ export const composite: StrategyDef = {
   id: 'composite',
   name: 'Signal Composite',
   description:
-    'Supertrend, RSI(2) pullback and band reversion vote every bar. It buys when any of them is long and the trend is not bearish, and sells when none are.',
+    'Trend and pullback strategies vote every bar (4h: Supertrend, Hull MA, RSI(2) pullback, Bollinger reversion). It goes long or short when any of them does and the trend allows it, and closes when none do.',
   defaults: { mask: 0b000111, threshold: 1, gate: 1, shorts: 0, shortGate: 2, stopAtr: 3 },
   grid: {
     mask: Array.from({ length: 63 }, (_, k) => k + 1),
@@ -113,13 +129,14 @@ export const composite: StrategyDef = {
     stopAtr: [3],
   },
   build(c, p) {
-    const { votes: all, regime, atr } = componentVotes(c, !!p.shorts, p);
-    const enabled = all.filter((_, k) => p.mask & (1 << k));
-    const names = COMPONENTS.filter((_, k) => p.mask & (1 << k)).map((s) => s.name);
+    const shortMask = p.shortMask ?? p.mask;
+    const has = (m: number, k: number) => Math.floor(m / 2 ** k) % 2 === 1;
+    const { votes: all, regime, atr } = componentVotes(c, !!p.shorts, p, p.mask + (p.shorts ? shortMask - (p.mask & shortMask) : 0));
+    const enabled = COMPONENTS.map((_, k) => (has(p.mask, k) ? all[k]! : null)).filter((v): v is Int8Array => !!v);
+    const names = COMPONENTS.filter((_, k) => has(p.mask, k)).map((s) => s.name);
     const n = c.length;
     // Longs are counted over `mask`; shorts over `shortMask` (defaults to the same strategies).
-    const shortMask = p.shortMask ?? p.mask;
-    const shortVoters = all.filter((_, k) => shortMask & (1 << k));
+    const shortVoters = p.shorts ? COMPONENTS.map((_, k) => (has(shortMask, k) ? all[k]! : null)).filter((v): v is Int8Array => !!v) : [];
     const longCount = new Int8Array(n);
     const shortCount = new Int8Array(n);
     for (const v of enabled) for (let i = 0; i < n; i++) if (v[i] === 1) longCount[i]++;
@@ -131,7 +148,7 @@ export const composite: StrategyDef = {
     const wantShort = (i: number) => !!p.shorts && shortCount[i] >= p.threshold && !wantLong(i) && gateShort(i);
 
     const signals: Signal[] = [];
-    const shortNames = COMPONENTS.filter((_, k) => shortMask & (1 << k)).map((s) => s.name);
+    const shortNames = p.shorts ? COMPONENTS.filter((_, k) => has(shortMask, k)).map((s) => s.name) : [];
     for (let i = 1; i < n; i++) {
       const reasons = (dir: number) =>
         dir === 1 ? names.filter((_, k) => enabled[k][i] === 1) : shortNames.filter((_, k) => shortVoters[k][i] === -1);

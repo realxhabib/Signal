@@ -22,7 +22,7 @@ export interface StrategyDef {
   build(candles: Candle[], p: Params, ctx?: { symbol: string; interval: string }): StrategyOutput;
 }
 
-const cols = (c: Candle[]) => ({
+export const cols = (c: Candle[]) => ({
   time: c.map((b) => b.time),
   open: c.map((b) => b.open),
   high: c.map((b) => b.high),
@@ -33,7 +33,7 @@ const cols = (c: Candle[]) => ({
 const barSeconds = (c: Candle[]) => (c.length > 1 ? c[1].time - c[0].time : 86_400);
 
 /** Trend regime per bar: 1 up, -1 down, 0 none. Uses a same-timeframe EMA plus a daily EMA when intraday. */
-function trendRegime(c: Candle[], close: number[], len: number, useHtf: number): number[] {
+export function trendRegime(c: Candle[], close: number[], len: number, useHtf: number): number[] {
   const e = ema(close, len);
   const sec = barSeconds(c);
   const daily =

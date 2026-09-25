@@ -2,7 +2,7 @@
 // pyramid at +2R) over the full history, by year, with a stress test.
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ALLOCATION, LEVELS, SPLIT } from '../src/composite';
+import { ALLOCATION, LEVELS, lineupFor, SPLIT } from '../src/composite';
 import { accountTrades, runAccount } from './account';
 import { stress } from './portfolio';
 import { perf, type Daily } from './sleeves';
@@ -15,8 +15,8 @@ const daily = (curve: { time: number; equity: number }[]) => {
   const ds = [...eod.keys()].sort((a, b) => a - b);
   return new Map(ds.slice(1).map((d, i) => [d, eod.get(d)! / eod.get(ds[i])! - 1]));
 };
-const t4 = await accountTrades('4h', undefined, undefined, LEVELS);
-const t1 = await accountTrades('1h', undefined, undefined, LEVELS);
+const t4 = await accountTrades('4h', lineupFor('4h'), undefined, LEVELS);
+const t1 = await accountTrades('1h', lineupFor('1h'), undefined, LEVELS);
 const report: Record<string, unknown> = { coins: UNIVERSE.length, allocation: ALLOCATION, split: SPLIT, levels: LEVELS };
 for (const [name, riskPct] of [['conservative', 0.5], ['balanced', 1]] as const) {
   const a4 = await runAccount('4h', t4.trades, t4.candlesBySym, { riskPct }, 'all');

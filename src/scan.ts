@@ -1,5 +1,5 @@
 import { backtest, defaultRisk } from './backtest';
-import { ALLOCATION, composite, LEVELS, modeOf, RECOMMENDED } from './composite';
+import { ALLOCATION, composite, LEVELS, lineupFor, modeOf } from './composite';
 import { computeFeatures } from './features';
 import type { Candle, Signal, Trade } from './types';
 
@@ -43,8 +43,9 @@ export type CoinStatus =
   | { kind: 'flat'; lastPct: number | null };
 
 /** Current Signal Composite status for one coin (used by the all-coins scanner). */
-export function coinStatus(c: Candle[], symbol: string, btcRegime: Map<number, number> | null, allowShorts: boolean): CoinStatus {
-  const p = allowShorts ? RECOMMENDED : { ...RECOMMENDED, shorts: 0 };
+export function coinStatus(c: Candle[], symbol: string, btcRegime: Map<number, number> | null, allowShorts: boolean, interval = '4h'): CoinStatus {
+  const lineup = lineupFor(interval);
+  const p = allowShorts ? lineup : { ...lineup, shorts: 0 };
   const out = composite.build(c, p);
   const signals = applyBtcGate(out.signals, symbol, btcRegime);
   const res = backtest(c, signals, out.atr, { ...defaultRisk, feePct: 0.02, slippagePct: 0, ...out.risk, ...LEVELS }, out.rules);
