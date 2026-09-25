@@ -150,7 +150,10 @@ async function analyze(id: number) {
   const risk = { ...riskParams(), ...out.risk, ...(isComposite ? LEVELS : {}) };
 
   let jevError: string | null = null;
-  if (ui.useJev.checked && gated.length) {
+  // Jev only filters in Advanced mode when switched on. Simple mode always shows exactly the signals the alerts
+  // and the all-coins table use (the backtested rules), so the chart never silently drops a signal.
+  const wantJev = mode === 'advanced' && ui.useJev.checked;
+  if (wantJev && gated.length) {
     try {
       // Jev always gets the same broad market context, whichever strategy proposed the trade.
       const context = computeIndicators(candles, defaultStrategy);
@@ -167,7 +170,7 @@ async function analyze(id: number) {
   }
   if (id !== runId) return;
 
-  const jevOn = ui.useJev.checked && !jevError;
+  const jevOn = wantJev && !jevError;
   const approved = jevOn
     ? gated.filter((s) => {
         const v = verdicts.get(s.index);
@@ -382,8 +385,9 @@ function drawPlan(p: TradePlan | undefined) {
   const tag = p.status === 'closed' ? ' (last)' : p.status === 'opening' ? ' (next open)' : '';
   const line = (price: number, color: string, title: string, style = 2, width: 1 | 2 = 1) =>
     priceLines.push(candleSeries.createPriceLine({ price, color: live ? color : color + '99', lineWidth: width, lineStyle: style, axisLabelVisible: true, title }));
-  line(p.entry, COLORS.fast, `Entry${tag}`, 0, 2);
-  line(p.stopNow, COLORS.short, p.stopNow === p.entry ? 'Stop = entry' : 'Stop', 2, 2);
+  const last = p.status === 'closed' ? 'Last trade ' : '';
+  line(p.entry, COLORS.fast, p.status === 'closed' ? 'Last trade entry' : `Entry${tag}`, 0, 2);
+  line(p.stopNow, COLORS.short, `${last}${p.stopNow === p.entry ? 'stop = entry' : 'stop'}`.replace(/^s/, 'S'), 2, 2);
   if (p.gold && p.goldTp) line(p.goldTp, COLORS.gold, '🥇 Gold TP', 0, 2);
   line(p.r1, COLORS.long, '+1R', 3);
   line(p.r2, COLORS.long, p.added ? '+2R (added ½)' : '+2R: add ½', 2);
